@@ -1,105 +1,100 @@
 'use client'
 export const dynamic = 'force-dynamic'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 
-type Analisis = {
-  question_id: string
-  nomor_soal: number
-  pertanyaan: string
-  total_dijawab: number
-  total_benar: number
-  persentase_benar: number
-  tingkat_kesulitan: string
-}
+type Row = { id: string; status: string; locked_at: string|null; user_id: string; profiles: { full_name: string } }
 
-export default function AnalisisButirSoal() {
+export default function Dashboard() {
   const router = useRouter()
-  const [data, setData] = useState<Analisis[]>([])
-  const [loading, setLoading] = useState(true)
+  const [rows, setRows] = useState<Row[]>([])
 
-  useEffect(() => {
-    const fetchData = async () => {
-      const { data, error } = await supabase
-        .from('analisis_butir_soal')
-        .select('*')
-        .order('nomor_soal')
+  const load = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('sessions')
+      .select('id, status, locked_at, user_id, profiles(full_name)')
+      .order('locked_at', { ascending: false, nullsFirst: false })
 
-      if (error) {
-        console.error('Error fetching analisis:', error)
-      } else {
-        setData(data || [])
-      }
-      setLoading(false)
+    if (error) {
+      console.error('[dashboard load]', error)
+      return
     }
-    fetchData()
+    setRows((data as any) || [])
   }, [])
 
-  const getWarnaTingkat = (tingkat: string) => {
-    switch (tingkat) {
-      case 'Mudah': return 'bg-green-100 text-green-800 border-green-300'
-      case 'Sedang': return 'bg-yellow-100 text-yellow-800 border-yellow-300'
-      case 'Susah': return 'bg-red-100 text-red-800 border-red-300'
-      default: return 'bg-gray-100 text-gray-800 border-gray-300'
+  useEffect(() => {
+    load()
+    const ch = supabase.channel('guru')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions' }, load)
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [load])
+
+  const unlock = async (id: string) => {
+    const yakin = confirm('Yakin ingin membuka kunci (unlock) siswa ini?\n\nKlik OK atau tekan Enter untuk melanjutkan.')
+    if (yakin) {
+      const { error } = await supabase.rpc('unlock_session', { p_session_id: id })
+      if (error) alert(error.message)
+      else load()
     }
   }
 
-  if (loading) return <p className="p-6 text-center text-gray-500">Memuat data analisis...</p>
+  const locked = rows.filter(r => r.status === 'locked')
+  const active = rows.filter(r => r.status === 'active')
+  const done   = rows.filter(r => r.status === 'finished')
 
   return (
-    <main className="p-6 max-w-6xl mx-auto">
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h1 className="text-2xl font-bold">Analisis Butir Soal</h1>
-          <p className="text-gray-500 text-sm mt-1">Evaluasi tingkat kesulitan soal berdasarkan jawaban seluruh peserta.</p>
-        </div>
+    <main className="p-6">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+        <h1 className="text-2xl font-bold">Dashboard Pengawas</h1>
         <button 
-          onClick={() => router.push('/dashboard')}
-          className="bg-gray-200 hover:bg-gray-300 text-black px-4 py-2 rounded text-sm font-medium"
+          onClick={() => router.push('/dashboard/analisis')}
+          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow text-sm font-medium"
         >
-          ← Kembali ke Dashboard
+          📊 Lihat Analisis Butir Soal
         </button>
       </div>
 
-      <div className="bg-white rounded-lg shadow overflow-x-auto border">
-        <table className="w-full text-left border-collapse">
+      <section className="mb-6">
+        <h2 className="text-red-700 font-semibold">🔴 Terkunci ({locked.length})</h2>
+        <table className="w-full mt-2 border">
           <thead>
-            <tr className="bg-gray-50 border-b">
-              <th className="p-4 font-semibold text-sm w-16">No. Soal</th>
-              <th className="p-4 font-semibold text-sm">Pertanyaan</th>
-              <th className="p-4 font-semibold text-sm text-center w-24">Dijawab</th>
-              <th className="p-4 font-semibold text-sm text-center w-24">Benar</th>
-              <th className="p-4 font-semibold text-sm text-center w-24">% Benar</th>
-              <th className="p-4 font-semibold text-sm text-center w-32">Kesimpulan</th>
+            <tr className="bg-red-50">
+              <th className="text-left p-2">Siswa</th>
+              <th className="text-left p-2">Locked sejak</th>
+              <th className="text-left p-2">Aksi</th>
             </tr>
           </thead>
           <tbody>
-            {data.map((row) => (
-              <tr key={row.question_id} className="border-b hover:bg-gray-50 transition">
-                <td className="p-4 text-center font-bold text-gray-700">{row.nomor_soal}</td>
-                <td className="p-4 text-sm">{row.pertanyaan}</td>
-                <td className="p-4 text-center text-sm">{row.total_dijawab}</td>
-                <td className="p-4 text-center text-sm font-medium text-green-600">{row.total_benar}</td>
-                <td className="p-4 text-center text-sm font-bold">{row.persentase_benar}%</td>
-                <td className="p-4 text-center">
-                  <span className={`px-3 py-1 rounded-full text-xs font-bold border ${getWarnaTingkat(row.tingkat_kesulitan)}`}>
-                    {row.tingkat_kesulitan}
-                  </span>
+            {locked.map(r => (
+              <tr key={r.id} className="border-t">
+                <td className="p-2">{r.profiles?.full_name || r.user_id.slice(0,8)}</td>
+                <td className="p-2">{r.locked_at ? new Date(r.locked_at).toLocaleTimeString() : '-'}</td>
+                <td className="p-2">
+                  <button onClick={()=>unlock(r.id)} className="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded">
+                    Unlock
+                  </button>
                 </td>
               </tr>
             ))}
-            {data.length === 0 && (
+            {locked.length===0 && (
               <tr>
-                <td colSpan={6} className="p-8 text-center text-gray-500">
-                  Belum ada data jawaban siswa untuk dianalisis.
-                </td>
+                <td colSpan={3} className="p-2 text-gray-500">Tidak ada siswa terkunci.</td>
               </tr>
             )}
           </tbody>
         </table>
-      </div>
+      </section>
+
+      <section className="mb-6">
+        <h2 className="text-green-700 font-semibold">🟢 Aktif ({active.length})</h2>
+      </section>
+      
+      <section>
+        <h2 className="text-gray-700 font-semibold">✅ Selesai ({done.length})</h2>
+      </section>
     </main>
   )
 }

@@ -55,12 +55,12 @@ export default function AnalisisButirSoal() {
           <h1 className="text-2xl font-bold">Analisis Butir Soal</h1>
           <p className="text-gray-500 text-sm mt-1">Evaluasi tingkat kesulitan soal berdasarkan jawaban seluruh peserta.</p>
         </div>
-        <button 
-          onClick={() => router.push('/dashboard')}
+        <a 
+          href="/dashboard"
           className="bg-gray-200 hover:bg-gray-300 text-black px-4 py-2 rounded text-sm font-medium"
         >
           ← Kembali ke Dashboard
-        </button>
+        </a>
       </div>
 
       <div className="bg-white rounded-lg shadow overflow-x-auto border">
@@ -69,10 +69,10 @@ export default function AnalisisButirSoal() {
             <tr className="bg-gray-50 border-b">
               <th className="p-4 font-semibold text-sm w-16">No. Soal</th>
               <th className="p-4 font-semibold text-sm">Pertanyaan</th>
-              <th className="p-4 font-semibold text-sm text-center w-24">Dijawab</th>
-              <th className="p-4 font-semibold text-sm text-center w-24">Benar</th>
-              <th className="p-4 font-semibold text-sm text-center w-24">% Benar</th>
-              <th className="p-4 font-semibold text-sm text-center w-32">Kesimpulan</th>
+              <th className="p-4 text-center font-semibold text-sm w-24">Dijawab</th>
+              <th className="p-4 text-center font-semibold text-sm w-24">Benar</th>
+              <th className="p-4 text-center font-semibold text-sm w-24">% Benar</th>
+              <th className="p-4 text-center font-semibold text-sm w-32">Kesimpulan</th>
             </tr>
           </thead>
           <tbody>
