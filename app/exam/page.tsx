@@ -1,4 +1,6 @@
 'use client'
+export const dynamic = 'force-dynamic'
+
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
@@ -9,7 +11,7 @@ type S = { id: string; status: 'active'|'locked'|'finished'; exam_id: string; st
 const LOCK_AFTER_MS = 30_000
 const POLL_ACTIVE_MS = 60_000
 const POLL_LOCKED_MS = 10_000
-const MINIMUM_MINUTES = 60 // Syarat minimal pengerjaan (menit)
+const MINIMUM_MINUTES = 60
 
 export default function ExamPage() {
   const router = useRouter()
@@ -18,16 +20,13 @@ export default function ExamPage() {
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [showWarning, setShowWarning] = useState(false)
   const [warnLeft, setWarnLeft] = useState(30)
-  
-  // State untuk Timer & Navigasi
-  const [timeElapsed, setTimeElapsed] = useState(0) // Detik
-  const [currentIdx, setCurrentIdx] = useState(0) // Indeks soal yang sedang dilihat
+  const [timeElapsed, setTimeElapsed] = useState(0)
+  const [currentIdx, setCurrentIdx] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const hideTimer = useRef<number | null>(null)
   const warnInterval = useRef<number | null>(null)
 
-  // 1. INIT: Ambil Sesi & Soal
   useEffect(() => {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser()
@@ -53,7 +52,6 @@ export default function ExamPage() {
     })()
   }, [router])
 
-  // 2. TIMER: Hitung berapa lama siswa sudah mengerjakan
   useEffect(() => {
     if (!session || session.status !== 'active') return
     const startTime = new Date(session.started_at).getTime()
@@ -67,7 +65,6 @@ export default function ExamPage() {
     return () => clearInterval(interval)
   }, [session])
 
-  // 3. DETEKSI PINDAH TAB (Anti-Kecurangan)
   useEffect(() => {
     if (!session || session.status !== 'active') return
     const onVis = () => {
@@ -93,7 +90,6 @@ export default function ExamPage() {
     return () => document.removeEventListener('visibilitychange', onVis)
   }, [session])
 
-  // 4. POLLING STATUS (Cek apakah guru membuka kunci)
   useEffect(() => {
     if (!session) return
     const interval = session.status === 'locked' ? POLL_LOCKED_MS : POLL_ACTIVE_MS
@@ -106,7 +102,6 @@ export default function ExamPage() {
     return () => clearInterval(id)
   }, [session])
 
-  // 5. SIMPAN JAWABAN (Autosave)
   const saveAnswer = useCallback(async (qid: string, choice: string) => {
     if (!session) return
     setAnswers(a => ({ ...a, [qid]: choice }))
@@ -116,32 +111,25 @@ export default function ExamPage() {
     )
   }, [session])
 
-  // 6. SUBMIT UJIAN DENGAN VALIDASI
   const handleSubmit = async () => {
     if (!session) return
-
-    // VALIDASI 1: Cek apakah waktu sudah 60 menit
     const minutesElapsed = Math.floor(timeElapsed / 60)
     if (minutesElapsed < MINIMUM_MINUTES) {
       alert(`Anda baru mengerjakan ${minutesElapsed} menit. Anda harus mengerjakan minimal ${MINIMUM_MINUTES} menit sebelum bisa mengumpulkan.`)
       return
     }
-
-    // VALIDASI 2: Cek apakah semua soal sudah dijawab
     const answeredCount = Object.keys(answers).length
     if (answeredCount < questions.length) {
       alert(`Masih ada ${questions.length - answeredCount} soal yang belum dijawab! Silakan cek navigasi soal berwarna merah.`)
       return
     }
-
-    // PROSES SUBMIT
     if (!confirm('Semua soal sudah dijawab. Yakin ingin mengumpulkan ujian?')) return
     setIsSubmitting(true)
 
     const { error } = await supabase.from('sessions').update({ 
       status: 'finished', 
       finished_at: new Date().toISOString(),
-      duration_seconds: timeElapsed // Simpan durasi pengerjaan
+      duration_seconds: timeElapsed
     }).eq('id', session.id)
 
     if (error) {
@@ -152,7 +140,6 @@ export default function ExamPage() {
     }
   }
 
-  // FORMAT WAKTU (HH:MM:SS)
   const formatTime = (totalSeconds: number) => {
     const h = Math.floor(totalSeconds / 3600)
     const m = Math.floor((totalSeconds % 3600) / 60)
@@ -193,7 +180,6 @@ export default function ExamPage() {
         </div>
       )}
 
-      {/* KOLOM KIRI: SOAL UJIAN */}
       <div className="flex-1">
         <div className="flex justify-between items-center mb-4 bg-gray-100 p-4 rounded shadow-sm">
           <h1 className="text-xl font-bold">Ujian PAI</h1>
@@ -240,7 +226,6 @@ export default function ExamPage() {
         )}
       </div>
 
-      {/* KOLOM KANAN: NAVIGASI & SUBMIT */}
       <div className="w-full md:w-80">
         <div className="border rounded shadow-sm p-4 bg-white sticky top-6">
           <h2 className="font-bold mb-3 border-b pb-2">Navigasi Soal</h2>
