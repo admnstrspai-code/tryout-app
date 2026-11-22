@@ -11,7 +11,7 @@ type S = { id: string; status: 'active'|'locked'|'finished'; exam_id: string; st
 const LOCK_AFTER_MS = 30_000
 const POLL_ACTIVE_MS = 60_000
 const POLL_LOCKED_MS = 10_000
-const MINIMUM_MINUTES = 60
+const MINIMUM_MINUTES = 60 // Syarat minimal pengerjaan
 
 export default function ExamPage() {
   const router = useRouter()
@@ -20,13 +20,16 @@ export default function ExamPage() {
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [showWarning, setShowWarning] = useState(false)
   const [warnLeft, setWarnLeft] = useState(30)
+  
   const [timeElapsed, setTimeElapsed] = useState(0)
+  const [examDuration, setExamDuration] = useState(120) // Default 120 menit (bisa diubah dari DB)
   const [currentIdx, setCurrentIdx] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const hideTimer = useRef<number | null>(null)
   const warnInterval = useRef<number | null>(null)
 
+  // 1. INIT: Ambil Sesi, Soal (dari View Rahasia), dan Durasi Ujian
   useEffect(() => {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser()
@@ -34,6 +37,8 @@ export default function ExamPage() {
 
       const { data: exam } = await supabase.from('exams').select('*').eq('is_open', true).limit(1).single()
       if (!exam) return alert('Tidak ada ujian aktif')
+      
+      if (exam.duration_minutes) setExamDuration(exam.duration_minutes)
 
       let { data: sess } = await supabase.from('sessions').select('*').eq('user_id', user.id).eq('exam_id', exam.id).maybeSingle()
       if (!sess) {
@@ -42,7 +47,7 @@ export default function ExamPage() {
       }
       setSession(sess as S)
 
-      const { data: qs } = await supabase.from('questions').select('*').eq('exam_id', exam.id).order('number')
+      const { data: qs } = await supabase.from('questions_untuk_siswa').select('*').eq('exam_id', exam.id).order('number')
       setQuestions((qs || []) as Q[])
 
       const { data: ans } = await supabase.from('answers').select('question_id, choice').eq('session_id', sess!.id)
@@ -52,19 +57,34 @@ export default function ExamPage() {
     })()
   }, [router])
 
+  // 2. TIMER & AUTO-SUBMIT
   useEffect(() => {
     if (!session || session.status !== 'active') return
     const startTime = new Date(session.started_at).getTime()
-    
+    const maxSeconds = examDuration * 60
+
     const interval = setInterval(() => {
       const now = new Date().getTime()
       const diffInSeconds = Math.floor((now - startTime) / 1000)
       setTimeElapsed(diffInSeconds)
+
+      // AUTO SUBMIT JIKA WAKTU HABIS
+      if (diffInSeconds >= maxSeconds) {
+        clearInterval(interval)
+        supabase.from('sessions').update({ 
+          status: 'finished', 
+          finished_at: new Date().toISOString(),
+          duration_seconds: diffInSeconds
+        }).eq('id', session.id).then(() => {
+          setSession(s => s ? { ...s, status: 'finished' } : s)
+        })
+      }
     }, 1000)
 
     return () => clearInterval(interval)
-  }, [session])
+  }, [session, examDuration])
 
+  // 3. DETEKSI PINDAH TAB (Anti-Kecurangan)
   useEffect(() => {
     if (!session || session.status !== 'active') return
     const onVis = () => {
@@ -90,6 +110,7 @@ export default function ExamPage() {
     return () => document.removeEventListener('visibilitychange', onVis)
   }, [session])
 
+  // 4. POLLING STATUS (Cek apakah guru membuka kunci)
   useEffect(() => {
     if (!session) return
     const interval = session.status === 'locked' ? POLL_LOCKED_MS : POLL_ACTIVE_MS
@@ -102,6 +123,7 @@ export default function ExamPage() {
     return () => clearInterval(id)
   }, [session])
 
+  // 5. SIMPAN JAWABAN (Autosave)
   const saveAnswer = useCallback(async (qid: string, choice: string) => {
     if (!session) return
     setAnswers(a => ({ ...a, [qid]: choice }))
@@ -111,6 +133,7 @@ export default function ExamPage() {
     )
   }, [session])
 
+  // 6. SUBMIT MANUAL
   const handleSubmit = async () => {
     if (!session) return
     const minutesElapsed = Math.floor(timeElapsed / 60)
@@ -140,10 +163,13 @@ export default function ExamPage() {
     }
   }
 
-  const formatTime = (totalSeconds: number) => {
-    const h = Math.floor(totalSeconds / 3600)
-    const m = Math.floor((totalSeconds % 3600) / 60)
-    const s = totalSeconds % 60
+  // Format Hitung Mundur (Sisa Waktu)
+  const formatRemainingTime = () => {
+    const totalSeconds = examDuration * 60
+    const remaining = Math.max(0, totalSeconds - timeElapsed)
+    const h = Math.floor(remaining / 3600)
+    const m = Math.floor((remaining % 3600) / 60)
+    const s = remaining % 60
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
   }
 
@@ -166,8 +192,10 @@ export default function ExamPage() {
   )
 
   const currentQ = questions[currentIdx]
-  const isTimeUp = Math.floor(timeElapsed / 60) >= MINIMUM_MINUTES
+  const minutesElapsed = Math.floor(timeElapsed / 60)
+  const isTimeUp = minutesElapsed >= MINIMUM_MINUTES
   const allAnswered = Object.keys(answers).length === questions.length
+  const timeRemainingSeconds = (examDuration * 60) - timeElapsed
 
   return (
     <main className="p-6 max-w-5xl mx-auto flex flex-col md:flex-row gap-6">
@@ -183,8 +211,8 @@ export default function ExamPage() {
       <div className="flex-1">
         <div className="flex justify-between items-center mb-4 bg-gray-100 p-4 rounded shadow-sm">
           <h1 className="text-xl font-bold">Ujian PAI</h1>
-          <div className="text-lg font-mono font-bold text-blue-700">
-            ⏱ {formatTime(timeElapsed)}
+          <div className={`text-lg font-mono font-bold ${timeRemainingSeconds < 300 ? 'text-red-600 animate-pulse' : 'text-blue-700'}`}>
+            ⏱ Sisa Waktu: {formatRemainingTime()}
           </div>
         </div>
 
@@ -265,7 +293,7 @@ export default function ExamPage() {
           
           {!isTimeUp && (
             <p className="text-xs text-red-600 mt-2 text-center">
-              Minimal pengerjaan {MINIMUM_MINUTES} menit. Sisa waktu tunggu: {MINIMUM_MINUTES - Math.floor(timeElapsed/60)} menit.
+              Minimal pengerjaan {MINIMUM_MINUTES} menit. Sisa waktu tunggu: {MINIMUM_MINUTES - minutesElapsed} menit.
             </p>
           )}
           {isTimeUp && !allAnswered && (
