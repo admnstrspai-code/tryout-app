@@ -49,12 +49,20 @@ export default function Dashboard() {
     <main className="p-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <h1 className="text-2xl font-bold">Dashboard Pengawas</h1>
-        <button 
-          onClick={() => router.push('/dashboard/analisis')}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow text-sm font-medium"
-        >
-          📊 Lihat Analisis Butir Soal
-        </button>
+        <div className="flex gap-2">
+          <button 
+            onClick={() => router.push('/dashboard/siswa')}
+            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded shadow text-sm font-medium"
+          >
+            👥 Import Siswa
+          </button>
+          <button 
+            onClick={() => router.push('/dashboard/analisis')}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow text-sm font-medium"
+          >
+            📊 Lihat Analisis
+          </button>
+        </div>
       </div>
 
       <section className="mb-6">
