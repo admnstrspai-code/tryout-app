@@ -61,7 +61,7 @@ export default function ImportSiswa() {
         {loading ? 'Memproses...' : 'Mulai Import'}
       </button>
 
-                {result && (
+      {result && (
         <div className={`mt-6 p-4 rounded border ${result.success ? 'bg-green-50 border-green-300' : 'bg-red-50 border-red-300'}`}>
           <h3 className="font-bold text-lg mb-2">Hasil Import:</h3>
           {result.success ? (
@@ -78,3 +78,6 @@ export default function ImportSiswa() {
           )}
         </div>
       )}
+    </main>
+  )
+}
