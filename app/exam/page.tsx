@@ -83,13 +83,14 @@ export default function ExamPage() {
   // ANTI-CHEAT
   useEffect(() => {
     if (!session || session.status !== 'active') return
+    
     const onVis = () => {
       if (document.hidden) {
         setShowWarning(true)
         setWarnLeft(30)
         const start = Date.now()
         warnInterval.current = window.setInterval(() => {
-          setWarnLeft(Math.max(0, 30 - Math.floor((Date.now()-start)/1000)))
+          setWarnLeft(Math.max(0, 30 - Math.floor((Date.now() - start) / 1000)))
         }, 500)
         hideTimer.current = window.setTimeout(async () => {
           const { data } = await supabase.rpc('lock_my_session', { p_session_id: session.id })
@@ -102,9 +103,21 @@ export default function ExamPage() {
         setShowWarning(false)
       }
     }
+    
     document.addEventListener('visibilitychange', onVis)
-    return () => document.removeEventListener('visibilitychange', onVis)
+    return () => {
+      document.removeEventListener('visibilitychange', onVis)
+      if (hideTimer.current) clearTimeout(hideTimer.current)
+      if (warnInterval.current) clearInterval(warnInterval.current)
+    }
   }, [session])
+
+  // Fungsi Manual Menutup Peringatan (Jika browser macet)
+  const dismissWarning = () => {
+    setShowWarning(false)
+    if (hideTimer.current) clearTimeout(hideTimer.current)
+    if (warnInterval.current) clearInterval(warnInterval.current)
+  }
 
   // POLLING STATUS
   useEffect(() => {
@@ -181,7 +194,7 @@ export default function ExamPage() {
     </main>
   )
 
-  // TAMPILAN HASIL (Jika sudah selesai)
+  // TAMPILAN HASIL
   if (session.status === 'finished') return (
     <main className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="text-center p-10 bg-white rounded shadow-lg max-w-md w-full border-t-4 border-blue-600">
@@ -214,6 +227,12 @@ export default function ExamPage() {
           <div className="bg-white p-8 rounded max-w-md text-center">
             <h2 className="text-2xl font-bold text-red-600">⚠️ Jangan tinggalkan halaman!</h2>
             <p className="mt-2">Kembali dalam <b>{warnLeft}</b> detik atau ujian akan terkunci.</p>
+            <button 
+              onClick={dismissWarning}
+              className="mt-6 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded font-bold"
+            >
+              Saya Kembali
+            </button>
           </div>
         </div>
       )}
