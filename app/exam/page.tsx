@@ -6,12 +6,12 @@ import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 
 type Q = { id: string; number: number; question: string; option_a: string; option_b: string; option_c: string; option_d: string }
-type S = { id: string; status: 'active'|'locked'|'finished'; exam_id: string; started_at: string }
+type S = { id: string; status: 'active'|'locked'|'finished'; exam_id: string; started_at: string; score: number | null }
 
 const LOCK_AFTER_MS = 30_000
 const POLL_ACTIVE_MS = 60_000
 const POLL_LOCKED_MS = 10_000
-const MINIMUM_MINUTES = 60 // Syarat minimal pengerjaan
+const MINIMUM_MINUTES = 60
 
 export default function ExamPage() {
   const router = useRouter()
@@ -22,14 +22,13 @@ export default function ExamPage() {
   const [warnLeft, setWarnLeft] = useState(30)
   
   const [timeElapsed, setTimeElapsed] = useState(0)
-  const [examDuration, setExamDuration] = useState(120) // Default 120 menit (bisa diubah dari DB)
+  const [examDuration, setExamDuration] = useState(120)
   const [currentIdx, setCurrentIdx] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const hideTimer = useRef<number | null>(null)
   const warnInterval = useRef<number | null>(null)
 
-  // 1. INIT: Ambil Sesi, Soal (dari View Rahasia), dan Durasi Ujian
   useEffect(() => {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser()
@@ -57,7 +56,7 @@ export default function ExamPage() {
     })()
   }, [router])
 
-  // 2. TIMER & AUTO-SUBMIT
+  // TIMER & AUTO-SUBMIT
   useEffect(() => {
     if (!session || session.status !== 'active') return
     const startTime = new Date(session.started_at).getTime()
@@ -68,15 +67,12 @@ export default function ExamPage() {
       const diffInSeconds = Math.floor((now - startTime) / 1000)
       setTimeElapsed(diffInSeconds)
 
-      // AUTO SUBMIT JIKA WAKTU HABIS
       if (diffInSeconds >= maxSeconds) {
         clearInterval(interval)
-        supabase.from('sessions').update({ 
-          status: 'finished', 
-          finished_at: new Date().toISOString(),
-          duration_seconds: diffInSeconds
-        }).eq('id', session.id).then(() => {
-          setSession(s => s ? { ...s, status: 'finished' } : s)
+        supabase.from('sessions').update({ status: 'finished', finished_at: new Date().toISOString(), duration_seconds: diffInSeconds }).eq('id', session.id).then(async () => {
+          await supabase.rpc('calculate_and_save_score', { p_session_id: session.id })
+          const { data } = await supabase.from('sessions').select('*').eq('id', session.id).single()
+          setSession(data as S)
         })
       }
     }, 1000)
@@ -84,7 +80,7 @@ export default function ExamPage() {
     return () => clearInterval(interval)
   }, [session, examDuration])
 
-  // 3. DETEKSI PINDAH TAB (Anti-Kecurangan)
+  // ANTI-CHEAT
   useEffect(() => {
     if (!session || session.status !== 'active') return
     const onVis = () => {
@@ -110,20 +106,19 @@ export default function ExamPage() {
     return () => document.removeEventListener('visibilitychange', onVis)
   }, [session])
 
-  // 4. POLLING STATUS (Cek apakah guru membuka kunci)
+  // POLLING STATUS
   useEffect(() => {
     if (!session) return
     const interval = session.status === 'locked' ? POLL_LOCKED_MS : POLL_ACTIVE_MS
     const id = setInterval(async () => {
-      const { data } = await supabase.from('sessions').select('status').eq('id', session.id).single()
+      const { data } = await supabase.from('sessions').select('status, score').eq('id', session.id).single()
       if (data?.status && data.status !== session.status) {
-        setSession(s => s ? { ...s, status: data.status } : s)
+        setSession(s => s ? { ...s, status: data.status, score: data.score } : s)
       }
     }, interval)
     return () => clearInterval(id)
   }, [session])
 
-  // 5. SIMPAN JAWABAN (Autosave)
   const saveAnswer = useCallback(async (qid: string, choice: string) => {
     if (!session) return
     setAnswers(a => ({ ...a, [qid]: choice }))
@@ -133,7 +128,7 @@ export default function ExamPage() {
     )
   }, [session])
 
-  // 6. SUBMIT MANUAL
+  // SUBMIT MANUAL
   const handleSubmit = async () => {
     if (!session) return
     const minutesElapsed = Math.floor(timeElapsed / 60)
@@ -149,6 +144,7 @@ export default function ExamPage() {
     if (!confirm('Semua soal sudah dijawab. Yakin ingin mengumpulkan ujian?')) return
     setIsSubmitting(true)
 
+    // 1. Update status jadi finished
     const { error } = await supabase.from('sessions').update({ 
       status: 'finished', 
       finished_at: new Date().toISOString(),
@@ -159,11 +155,15 @@ export default function ExamPage() {
       alert('Gagal mengumpulkan: ' + error.message)
       setIsSubmitting(false)
     } else {
-      setSession(s => s ? { ...s, status: 'finished' } : s)
+      // 2. Hitung skor otomatis
+      await supabase.rpc('calculate_and_save_score', { p_session_id: session.id })
+      
+      // 3. Ambil data terbaru (termasuk skor) untuk ditampilkan
+      const { data } = await supabase.from('sessions').select('*').eq('id', session.id).single()
+      setSession(data as S)
     }
   }
 
-  // Format Hitung Mundur (Sisa Waktu)
   const formatRemainingTime = () => {
     const totalSeconds = examDuration * 60
     const remaining = Math.max(0, totalSeconds - timeElapsed)
@@ -185,9 +185,23 @@ export default function ExamPage() {
     </main>
   )
 
+  // TAMPILAN HASIL (Jika sudah selesai)
   if (session.status === 'finished') return (
-    <main className="p-6 text-center">
-      <h1 className="text-2xl font-bold">Ujian selesai.</h1>
+    <main className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="text-center p-10 bg-white rounded shadow-lg max-w-md w-full border-t-4 border-blue-600">
+        <h1 className="text-3xl font-bold text-gray-800 mb-2">Ujian Selesai!</h1>
+        <p className="text-gray-500 mb-8">Terima kasih telah mengerjakan try out PAI.</p>
+        
+        <div className="bg-blue-50 rounded-lg p-6 mb-8">
+          <p className="text-lg text-blue-800 font-medium mb-1">Nilai Akhir Anda:</p>
+          <p className="text-7xl font-extrabold text-blue-600">{session.score ?? '...'}</p>
+          <p className="text-sm text-blue-500 mt-2">Skala 0 - 100</p>
+        </div>
+
+        <button onClick={() => window.location.href = '/'} className="bg-black hover:bg-gray-800 text-white px-8 py-3 rounded font-bold w-full transition">
+          Kembali ke Halaman Login
+        </button>
+      </div>
     </main>
   )
 
