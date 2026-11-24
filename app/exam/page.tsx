@@ -144,7 +144,6 @@ export default function ExamPage() {
     if (!confirm('Semua soal sudah dijawab. Yakin ingin mengumpulkan ujian?')) return
     setIsSubmitting(true)
 
-    // 1. Update status jadi finished
     const { error } = await supabase.from('sessions').update({ 
       status: 'finished', 
       finished_at: new Date().toISOString(),
@@ -155,10 +154,7 @@ export default function ExamPage() {
       alert('Gagal mengumpulkan: ' + error.message)
       setIsSubmitting(false)
     } else {
-      // 2. Hitung skor otomatis
       await supabase.rpc('calculate_and_save_score', { p_session_id: session.id })
-      
-      // 3. Ambil data terbaru (termasuk skor) untuk ditampilkan
       const { data } = await supabase.from('sessions').select('*').eq('id', session.id).single()
       setSession(data as S)
     }
@@ -194,7 +190,7 @@ export default function ExamPage() {
         
         <div className="bg-blue-50 rounded-lg p-6 mb-8">
           <p className="text-lg text-blue-800 font-medium mb-1">Nilai Akhir Anda:</p>
-          <p className="text-7xl font-extrabold text-blue-600">{session.score ?? '...'}</p>
+          <p className="text-7xl font-extrabold text-blue-600">{session.score !== null ? session.score : '0'}</p>
           <p className="text-sm text-blue-500 mt-2">Skala 0 - 100</p>
         </div>
 
