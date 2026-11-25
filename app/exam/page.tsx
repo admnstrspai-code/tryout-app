@@ -11,7 +11,7 @@ type S = { id: string; status: 'active'|'locked'|'finished'; exam_id: string; st
 const LOCK_AFTER_MS = 30_000
 const POLL_ACTIVE_MS = 60_000
 const POLL_LOCKED_MS = 10_000
-const MINIMUM_MINUTES = 60
+const MINIMUM_MINUTES = 0
 
 export default function ExamPage() {
   const router = useRouter()
