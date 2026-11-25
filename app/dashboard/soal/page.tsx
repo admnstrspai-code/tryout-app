@@ -1,17 +1,30 @@
 'use client'
 export const dynamic = 'force-dynamic'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+
+type Soal = {
+  id: string
+  number: number
+  question: string
+  option_a: string
+  option_b: string
+  option_c: string
+  option_d: string
+  correct_option: string
+}
 
 export default function InputSoal() {
   const router = useRouter()
   const [examId, setExamId] = useState<string>('')
+  const [questions, setQuestions] = useState<Soal[]>([])
   const [loading, setLoading] = useState(false)
   const [msg, setMsg] = useState('')
 
-  // State untuk form soal
+  // State Form
+  const [editId, setEditId] = useState<string | null>(null) // Jika ada isinya, berarti mode Edit
   const [number, setNumber] = useState(1)
   const [question, setQuestion] = useState('')
   const [optionA, setOptionA] = useState('')
@@ -20,29 +33,35 @@ export default function InputSoal() {
   const [optionD, setOptionD] = useState('')
   const [correctOption, setCorrectOption] = useState('A')
 
-  // Ambil ID Ujian yang sedang aktif
-  useEffect(() => {
-    const fetchExam = async () => {
-      const { data } = await supabase.from('exams').select('id').eq('is_open', true).limit(1).single()
-      if (data) {
-        setExamId(data.id)
-        // Cari nomor soal terakhir untuk otomatis menaikkan nomor
-        const { data: qs } = await supabase.from('questions').select('number').eq('exam_id', data.id).order('number', { ascending: false }).limit(1)
-        if (qs && qs.length > 0) setNumber(qs[0].number + 1)
-      } else {
-        setMsg('Tidak ada ujian aktif. Buka ujian di Supabase terlebih dahulu.')
+  // 1. Ambil ID Ujian & Daftar Soal
+  const loadData = useCallback(async () => {
+    const { data: exam } = await supabase.from('exams').select('id').eq('is_open', true).limit(1).single()
+    if (exam) {
+      setExamId(exam.id)
+      const { data: qs } = await supabase.from('questions').select('*').eq('exam_id', exam.id).order('number')
+      if (qs) setQuestions(qs)
+      
+      // Otomatis set nomor berikutnya
+      if (qs && qs.length > 0 && !editId) {
+        setNumber(Math.max(...qs.map(q => q.number)) + 1)
       }
+    } else {
+      setMsg('Tidak ada ujian aktif di database.')
     }
-    fetchExam()
-  }, [])
+  }, [editId])
 
+  useEffect(() => {
+    loadData()
+  }, [loadData])
+
+  // 2. Simpan Soal (Insert atau Update)
   const handleSave = async (e: any) => {
     e.preventDefault()
     if (!examId) return alert('Ujian tidak ditemukan')
     setLoading(true)
     setMsg('')
 
-    const { error } = await supabase.from('questions').insert({
+    const payload = {
       exam_id: examId,
       number: number,
       question: question,
@@ -51,32 +70,71 @@ export default function InputSoal() {
       option_c: optionC,
       option_d: optionD,
       correct_option: correctOption
-    })
+    }
 
-    if (error) {
-      setMsg(`Gagal menyimpan: ${error.message}`)
+    let errorMsg = null
+
+    if (editId) {
+      // Mode Edit: Update data
+      const { error } = await supabase.from('questions').update(payload).eq('id', editId)
+      if (error) errorMsg = error.message
     } else {
-      setMsg('Soal berhasil disimpan!')
-      // Kosongkan form dan naikkan nomor otomatis
-      setQuestion('')
-      setOptionA('')
-      setOptionB('')
-      setOptionC('')
-      setOptionD('')
-      setCorrectOption('A')
-      setNumber(prev => prev + 1)
+      // Mode Baru: Insert data
+      const { error } = await supabase.from('questions').insert(payload)
+      if (error) errorMsg = error.message
+    }
+
+    if (errorMsg) {
+      setMsg(`Gagal menyimpan: ${errorMsg}`)
+    } else {
+      setMsg(editId ? 'Soal berhasil diperbarui!' : 'Soal berhasil disimpan!')
+      resetForm()
+      loadData() // Refresh tabel
     }
     setLoading(false)
   }
 
+  // 3. Hapus Soal
+  const handleDelete = async (id: string) => {
+    if (!confirm('Yakin ingin menghapus soal ini?')) return
+    const { error } = await supabase.from('questions').delete().eq('id', id)
+    if (error) return alert(error.message)
+    loadData()
+  }
+
+  // 4. Masuk Mode Edit
+  const handleEdit = (q: Soal) => {
+    setEditId(q.id)
+    setNumber(q.number)
+    setQuestion(q.question)
+    setOptionA(q.option_a)
+    setOptionB(q.option_b)
+    setOptionC(q.option_c)
+    setOptionD(q.option_d)
+    setCorrectOption(q.correct_option)
+    window.scrollTo(0, 0) // Scroll ke atas (form)
+  }
+
+  // 5. Reset Form
+  const resetForm = () => {
+    setEditId(null)
+    setQuestion('')
+    setOptionA('')
+    setOptionB('')
+    setOptionC('')
+    setOptionD('')
+    setCorrectOption('A')
+    // Set nomor ke urutan terakhir + 1
+    if (questions.length > 0) {
+      setNumber(Math.max(...questions.map(q => q.number)) + 1)
+    }
+  }
+
   return (
-    <main className="p-6 max-w-3xl mx-auto">
+    <main className="p-6 max-w-5xl mx-auto">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">Input Soal Ujian</h1>
-        <button 
-          onClick={() => router.push('/dashboard')}
-          className="bg-gray-200 hover:bg-gray-300 text-black px-4 py-2 rounded text-sm font-medium"
-        >
+        <h1 className="text-2xl font-bold">Manajemen Soal Ujian</h1>
+        <button onClick={() => router.push('/dashboard')} className="bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded text-sm font-medium">
           ← Kembali ke Dashboard
         </button>
       </div>
@@ -87,25 +145,18 @@ export default function InputSoal() {
         </div>
       )}
 
-      <form onSubmit={handleSave} className="bg-white p-6 rounded-lg shadow-sm border space-y-4">
+      {/* FORM INPUT / EDIT */}
+      <form onSubmit={handleSave} className="bg-white p-6 rounded-lg shadow-sm border space-y-4 mb-8">
+        <h2 className="text-lg font-bold border-b pb-2">{editId ? '✏️ Edit Soal' : '➕ Tambah Soal Baru'}</h2>
+        
         <div className="grid grid-cols-4 gap-4">
           <div className="col-span-1">
             <label className="block text-sm font-medium mb-1">No. Soal</label>
-            <input 
-              type="number" 
-              className="w-full border p-2 rounded" 
-              value={number} 
-              onChange={e => setNumber(parseInt(e.target.value))} 
-              required 
-            />
+            <input type="number" className="w-full border p-2 rounded" value={number} onChange={e => setNumber(parseInt(e.target.value))} required />
           </div>
           <div className="col-span-3">
             <label className="block text-sm font-medium mb-1">Kunci Jawaban</label>
-            <select 
-              className="w-full border p-2 rounded" 
-              value={correctOption} 
-              onChange={e => setCorrectOption(e.target.value)}
-            >
+            <select className="w-full border p-2 rounded" value={correctOption} onChange={e => setCorrectOption(e.target.value)}>
               <option value="A">A</option>
               <option value="B">B</option>
               <option value="C">C</option>
@@ -116,42 +167,60 @@ export default function InputSoal() {
 
         <div>
           <label className="block text-sm font-medium mb-1">Pertanyaan</label>
-          <textarea 
-            className="w-full border p-2 rounded h-24" 
-            placeholder="Ketik pertanyaan di sini..."
-            value={question} 
-            onChange={e => setQuestion(e.target.value)} 
-            required 
-          />
+          <textarea className="w-full border p-2 rounded h-20" placeholder="Ketik pertanyaan..." value={question} onChange={e => setQuestion(e.target.value)} required />
         </div>
 
         <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium mb-1">Pilihan A</label>
-            <input className="w-full border p-2 rounded" value={optionA} onChange={e => setOptionA(e.target.value)} required />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Pilihan B</label>
-            <input className="w-full border p-2 rounded" value={optionB} onChange={e => setOptionB(e.target.value)} required />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Pilihan C</label>
-            <input className="w-full border p-2 rounded" value={optionC} onChange={e => setOptionC(e.target.value)} required />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Pilihan D</label>
-            <input className="w-full border p-2 rounded" value={optionD} onChange={e => setOptionD(e.target.value)} required />
-          </div>
+          <div><label className="block text-sm font-medium mb-1">Pilihan A</label><input className="w-full border p-2 rounded" value={optionA} onChange={e => setOptionA(e.target.value)} required /></div>
+          <div><label className="block text-sm font-medium mb-1">Pilihan B</label><input className="w-full border p-2 rounded" value={optionB} onChange={e => setOptionB(e.target.value)} required /></div>
+          <div><label className="block text-sm font-medium mb-1">Pilihan C</label><input className="w-full border p-2 rounded" value={optionC} onChange={e => setOptionC(e.target.value)} required /></div>
+          <div><label className="block text-sm font-medium mb-1">Pilihan D</label><input className="w-full border p-2 rounded" value={optionD} onChange={e => setOptionD(e.target.value)} required /></div>
         </div>
 
-        <button 
-          type="submit" 
-          disabled={loading}
-          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded mt-4 disabled:opacity-50"
-        >
-          {loading ? 'Menyimpan...' : 'Simpan Soal'}
-        </button>
+        <div className="flex gap-2 pt-2">
+          <button type="submit" disabled={loading} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded disabled:opacity-50">
+            {loading ? 'Menyimpan...' : (editId ? 'Simpan Perubahan' : 'Simpan Soal Baru')}
+          </button>
+          {editId && (
+            <button type="button" onClick={resetForm} className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded">
+              Batal Edit
+            </button>
+          )}
+        </div>
       </form>
+
+      {/* TABEL DAFTAR SOAL */}
+      <div className="bg-white rounded-lg shadow-sm border overflow-hidden">
+        <div className="p-4 bg-gray-50 border-b">
+          <h2 className="font-bold">Daftar Soal Saat Ini ({questions.length} Soal)</h2>
+        </div>
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-gray-100 text-sm">
+              <th className="p-3 w-12 text-center">No</th>
+              <th className="p-3">Pertanyaan</th>
+              <th className="p-3 w-20 text-center">Kunci</th>
+              <th className="p-3 w-32 text-center">Aksi</th>
+            </tr>
+          </thead>
+          <tbody>
+            {questions.map((q) => (
+              <tr key={q.id} className="border-b hover:bg-gray-50 text-sm">
+                <td className="p-3 text-center font-bold">{q.number}</td>
+                <td className="p-3 truncate max-w-md">{q.question}</td>
+                <td className="p-3 text-center font-bold text-blue-600">{q.correct_option}</td>
+                <td className="p-3 text-center space-x-2">
+                  <button onClick={() => handleEdit(q)} className="text-blue-600 hover:underline font-medium">Edit</button>
+                  <button onClick={() => handleDelete(q.id)} className="text-red-600 hover:underline font-medium">Hapus</button>
+                </td>
+              </tr>
+            ))}
+            {questions.length === 0 && (
+              <tr><td colSpan={4} className="p-4 text-center text-gray-500">Belum ada soal.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </main>
   )
 }
