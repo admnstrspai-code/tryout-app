@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 
 type Q = { id: string; number: number; question: string; option_a: string; option_b: string; option_c: string; option_d: string }
-type S = { id: string; status: 'active'|'locked'|'finished'; exam_id: string; started_at: string; score: number | null }
+type S = { id: string; status: 'active'|'locked'|'finished'; exam_id: string; started_at: string }
 
 const LOCK_AFTER_MS = 30_000
 const POLL_ACTIVE_MS = 60_000
@@ -25,10 +25,16 @@ export default function ExamPage() {
   const [examDuration, setExamDuration] = useState(120)
   const [currentIdx, setCurrentIdx] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  
+  // STATE BARU: Untuk Halaman Instruksi
+  const [showWelcome, setShowWelcome] = useState(true)
+  const [examId, setExamId] = useState<string>('')
+  const [isStarting, setIsStarting] = useState(false)
 
   const hideTimer = useRef<number | null>(null)
   const warnInterval = useRef<number | null>(null)
 
+  // 1. INIT: Ambil Data
   useEffect(() => {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser()
@@ -38,25 +44,52 @@ export default function ExamPage() {
       if (!exam) return alert('Tidak ada ujian aktif')
       
       if (exam.duration_minutes) setExamDuration(exam.duration_minutes)
-
-      let { data: sess } = await supabase.from('sessions').select('*').eq('user_id', user.id).eq('exam_id', exam.id).maybeSingle()
-      if (!sess) {
-        const { data } = await supabase.from('sessions').insert({ user_id: user.id, exam_id: exam.id }).select().single()
-        sess = data
-      }
-      setSession(sess as S)
+      setExamId(exam.id)
 
       const { data: qs } = await supabase.from('questions_untuk_siswa').select('*').eq('exam_id', exam.id).order('number')
       setQuestions((qs || []) as Q[])
 
-      const { data: ans } = await supabase.from('answers').select('question_id, choice').eq('session_id', sess!.id)
-      const map: Record<string, string> = {}
-      ans?.forEach((a: any) => map[a.question_id] = a.choice)
-      setAnswers(map)
+      // Cek apakah siswa sudah punya sesi ujian
+      const { data: sess } = await supabase.from('sessions').select('*').eq('user_id', user.id).eq('exam_id', exam.id).maybeSingle()
+      
+      if (sess) {
+        // Jika sesi sudah ada (misal: refresh halaman), langsung masuk ujian
+        setSession(sess as S)
+        setShowWelcome(false)
+        const { data: ans } = await supabase.from('answers').select('question_id, choice').eq('session_id', sess.id)
+        const map: Record<string, string> = {}
+        ans?.forEach((a: any) => map[a.question_id] = a.choice)
+        setAnswers(map)
+      }
+      // Jika belum ada sesi, biarkan showWelcome = true
     })()
   }, [router])
 
-  // TIMER & AUTO-SUBMIT
+  // 2. FUNGSI MULAI UJIAN (Dipicu dari Halaman Instruksi)
+  const handleStartExam = async () => {
+    setIsStarting(true)
+    try {
+      // Meminta izin Fullscreen ke browser
+      if (document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen()
+      }
+    } catch (err) {
+      console.log("Fullscreen ditolak oleh browser")
+    }
+
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    // Baru membuat sesi di database (timer mulai berjalan)
+    const { data: newSess } = await supabase.from('sessions').insert({ user_id: user.id, exam_id: examId }).select().single()
+    if (newSess) {
+      setSession(newSess as S)
+      setShowWelcome(false)
+    }
+    setIsStarting(false)
+  }
+
+  // 3. TIMER & AUTO-SUBMIT
   useEffect(() => {
     if (!session || session.status !== 'active') return
     const startTime = new Date(session.started_at).getTime()
@@ -69,28 +102,28 @@ export default function ExamPage() {
 
       if (diffInSeconds >= maxSeconds) {
         clearInterval(interval)
-        supabase.from('sessions').update({ status: 'finished', finished_at: new Date().toISOString(), duration_seconds: diffInSeconds }).eq('id', session.id).then(async () => {
-          await supabase.rpc('calculate_and_save_score', { p_session_id: session.id })
-          const { data } = await supabase.from('sessions').select('*').eq('id', session.id).single()
-          setSession(data as S)
+        supabase.from('sessions').update({ 
+          status: 'finished', 
+          finished_at: new Date().toISOString(),
+          duration_seconds: diffInSeconds
+        }).eq('id', session.id).then(() => {
+          setSession(s => s ? { ...s, status: 'finished' } : s)
         })
       }
     }, 1000)
-
     return () => clearInterval(interval)
   }, [session, examDuration])
 
-  // ANTI-CHEAT
+  // 4. DETEKSI PINDAH TAB (Anti-Kecurangan)
   useEffect(() => {
     if (!session || session.status !== 'active') return
-    
     const onVis = () => {
       if (document.hidden) {
         setShowWarning(true)
         setWarnLeft(30)
         const start = Date.now()
         warnInterval.current = window.setInterval(() => {
-          setWarnLeft(Math.max(0, 30 - Math.floor((Date.now() - start) / 1000)))
+          setWarnLeft(Math.max(0, 30 - Math.floor((Date.now()-start)/1000)))
         }, 500)
         hideTimer.current = window.setTimeout(async () => {
           const { data } = await supabase.rpc('lock_my_session', { p_session_id: session.id })
@@ -103,35 +136,24 @@ export default function ExamPage() {
         setShowWarning(false)
       }
     }
-    
     document.addEventListener('visibilitychange', onVis)
-    return () => {
-      document.removeEventListener('visibilitychange', onVis)
-      if (hideTimer.current) clearTimeout(hideTimer.current)
-      if (warnInterval.current) clearInterval(warnInterval.current)
-    }
+    return () => document.removeEventListener('visibilitychange', onVis)
   }, [session])
 
-  // Fungsi Manual Menutup Peringatan (Jika browser macet)
-  const dismissWarning = () => {
-    setShowWarning(false)
-    if (hideTimer.current) clearTimeout(hideTimer.current)
-    if (warnInterval.current) clearInterval(warnInterval.current)
-  }
-
-  // POLLING STATUS
+  // 5. POLLING STATUS
   useEffect(() => {
     if (!session) return
     const interval = session.status === 'locked' ? POLL_LOCKED_MS : POLL_ACTIVE_MS
     const id = setInterval(async () => {
-      const { data } = await supabase.from('sessions').select('status, score').eq('id', session.id).single()
+      const { data } = await supabase.from('sessions').select('status').eq('id', session.id).single()
       if (data?.status && data.status !== session.status) {
-        setSession(s => s ? { ...s, status: data.status, score: data.score } : s)
+        setSession(s => s ? { ...s, status: data.status } : s)
       }
     }, interval)
     return () => clearInterval(id)
   }, [session])
 
+  // 6. SIMPAN JAWABAN
   const saveAnswer = useCallback(async (qid: string, choice: string) => {
     if (!session) return
     setAnswers(a => ({ ...a, [qid]: choice }))
@@ -141,7 +163,7 @@ export default function ExamPage() {
     )
   }, [session])
 
-  // SUBMIT MANUAL
+  // 7. SUBMIT MANUAL
   const handleSubmit = async () => {
     if (!session) return
     const minutesElapsed = Math.floor(timeElapsed / 60)
@@ -167,9 +189,11 @@ export default function ExamPage() {
       alert('Gagal mengumpulkan: ' + error.message)
       setIsSubmitting(false)
     } else {
-      await supabase.rpc('calculate_and_save_score', { p_session_id: session.id })
-      const { data } = await supabase.from('sessions').select('*').eq('id', session.id).single()
-      setSession(data as S)
+      setSession(s => s ? { ...s, status: 'finished' } : s)
+      // Keluar dari Fullscreen jika selesai
+      if (document.fullscreenElement) {
+        document.exitFullscreen()
+      }
     }
   }
 
@@ -182,7 +206,46 @@ export default function ExamPage() {
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
   }
 
-  if (!session) return <p className="p-6">Memuat…</p>
+  if (!session && showWelcome) return (
+    // ===== HALAMAN INSTRUKSI (WELCOME SCREEN) =====
+    <main className="min-h-screen bg-gray-100 flex items-center justify-center p-6">
+      <div className="bg-white p-8 rounded-lg shadow-lg max-w-2xl w-full">
+        <h1 className="text-3xl font-bold text-center mb-6 text-blue-900">Instruksi Ujian</h1>
+        
+        <div className="space-y-4 mb-8 text-gray-700">
+          <div className="flex items-start">
+            <span className="text-xl mr-3">📝</span>
+            <p>Ujian ini terdiri dari <strong>{questions.length} soal</strong> Pilihan Ganda.</p>
+          </div>
+          <div className="flex items-start">
+            <span className="text-xl mr-3">⏱️</span>
+            <p>Waktu pengerjaan maksimal adalah <strong>{examDuration} menit</strong>.</p>
+          </div>
+          <div className="flex items-start">
+            <span className="text-xl mr-3">🔒</span>
+            <p>Anda <strong>tidak bisa mengumpulkan</strong> ujian sebelum mengerjakan minimal <strong>60 menit</strong>.</p>
+          </div>
+          <div className="flex items-start p-4 bg-red-50 border border-red-200 rounded-md mt-4">
+            <span className="text-2xl mr-3">⚠️</span>
+            <div>
+              <p className="font-bold text-red-700">PERINGATAN KERAS!</p>
+              <p className="text-red-600">Dilarang keras berpindah tab, meminimalkan browser, atau meninggalkan halaman ini. Sistem pengawas akan <strong>mengunci ujian Anda secara otomatis</strong> jika Anda terdeteksi keluar dari layar ujian lebih dari 30 detik.</p>
+            </div>
+          </div>
+        </div>
+
+        <button 
+          onClick={handleStartExam}
+          disabled={isStarting}
+          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-lg text-lg transition shadow-md"
+        >
+          {isStarting ? 'Mempersiapkan Ujian...' : 'Saya Mengerti & Mulai Ujian'}
+        </button>
+      </div>
+    </main>
+  )
+
+  if (!session) return <p className="p-6">Memuat data soal…</p>
 
   if (session.status === 'locked') return (
     <main className="min-h-screen flex items-center justify-center bg-red-50">
@@ -194,23 +257,11 @@ export default function ExamPage() {
     </main>
   )
 
-  // TAMPILAN HASIL
   if (session.status === 'finished') return (
-    <main className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="text-center p-10 bg-white rounded shadow-lg max-w-md w-full border-t-4 border-blue-600">
-        <h1 className="text-3xl font-bold text-gray-800 mb-2">Ujian Selesai!</h1>
-        <p className="text-gray-500 mb-8">Terima kasih telah mengerjakan try out PAI.</p>
-        
-        <div className="bg-blue-50 rounded-lg p-6 mb-8">
-          <p className="text-lg text-blue-800 font-medium mb-1">Nilai Akhir Anda:</p>
-          <p className="text-7xl font-extrabold text-blue-600">{session.score !== null ? session.score : '0'}</p>
-          <p className="text-sm text-blue-500 mt-2">Skala 0 - 100</p>
-        </div>
-
-        <button onClick={() => window.location.href = '/'} className="bg-black hover:bg-gray-800 text-white px-8 py-3 rounded font-bold w-full transition">
-          Kembali ke Halaman Login
-        </button>
-      </div>
+    <main className="p-6 text-center min-h-screen flex flex-col justify-center items-center">
+      <h1 className="text-3xl font-bold mb-4">Ujian Selesai</h1>
+      <p className="text-gray-600 mb-8">Jawaban Anda telah berhasil disimpan.</p>
+      <button onClick={() => router.push('/')} className="bg-blue-600 text-white px-6 py-2 rounded">Kembali ke Login</button>
     </main>
   )
 
@@ -221,18 +272,13 @@ export default function ExamPage() {
   const timeRemainingSeconds = (examDuration * 60) - timeElapsed
 
   return (
+    // ===== HALAMAN UJIAN SESUNGGUHNYA =====
     <main className="p-6 max-w-5xl mx-auto flex flex-col md:flex-row gap-6">
       {showWarning && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-          <div className="bg-white p-8 rounded max-w-md text-center">
-            <h2 className="text-2xl font-bold text-red-600">⚠️ Jangan tinggalkan halaman!</h2>
-            <p className="mt-2">Kembali dalam <b>{warnLeft}</b> detik atau ujian akan terkunci.</p>
-            <button 
-              onClick={dismissWarning}
-              className="mt-6 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded font-bold"
-            >
-              Saya Kembali
-            </button>
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+          <div className="bg-white p-8 rounded max-w-md text-center border-4 border-red-500">
+            <h2 className="text-3xl font-bold text-red-600 animate-pulse">⚠️ JANGAN TINGGALKAN HALAMAN!</h2>
+            <p className="mt-4 text-xl">Kembali dalam <b className="text-3xl text-red-700">{warnLeft}</b> detik atau ujian akan terkunci.</p>
           </div>
         </div>
       )}
@@ -267,14 +313,14 @@ export default function ExamPage() {
               <button 
                 onClick={() => setCurrentIdx(i => Math.max(0, i - 1))}
                 disabled={currentIdx === 0}
-                className="bg-gray-300 px-4 py-2 rounded disabled:opacity-50"
+                className="bg-gray-300 px-4 py-2 rounded disabled:opacity-50 font-medium"
               >
                 ← Sebelumnya
               </button>
               <button 
                 onClick={() => setCurrentIdx(i => Math.min(questions.length - 1, i + 1))}
                 disabled={currentIdx === questions.length - 1}
-                className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50"
+                className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50 font-medium"
               >
                 Selanjutnya →
               </button>
