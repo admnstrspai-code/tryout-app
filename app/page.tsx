@@ -21,7 +21,12 @@ export default function Home() {
     const { data: { user } } = await supabase.auth.getUser()
     const { data: prof } = await supabase.from('profiles').select('role').eq('id', user!.id).single()
     
-    router.push(prof?.role === 'guru' ? '/dashboard' : '/exam')
+    // PERBAIKAN: Jika role-nya 'guru' ATAU 'admin', masuk ke dashboard
+    if (prof?.role === 'guru' || prof?.role === 'admin') {
+      router.push('/dashboard')
+    } else {
+      router.push('/exam')
+    }
   }
 
   return (
