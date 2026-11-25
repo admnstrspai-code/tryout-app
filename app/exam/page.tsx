@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 
 type Q = { id: string; number: number; question: string; option_a: string; option_b: string; option_c: string; option_d: string }
-type S = { id: string; status: 'active'|'locked'|'finished'; exam_id: string; started_at: string }
+type S = { id: string; status: 'active'|'locked'|'finished'; exam_id: string; started_at: string; score: number | null }
 
 const LOCK_AFTER_MS = 30_000
 const POLL_ACTIVE_MS = 60_000
@@ -189,7 +189,15 @@ export default function ExamPage() {
       alert('Gagal mengumpulkan: ' + error.message)
       setIsSubmitting(false)
     } else {
-      setSession(s => s ? { ...s, status: 'finished' } : s)
+      // Ambil data sesi terbaru dari DB agar skor (yang dihitung database) langsung muncul
+      const { data: updatedSess } = await supabase.from('sessions').select('*').eq('id', session.id).single()
+      
+      if (updatedSess) {
+        setSession(updatedSess as S)
+      } else {
+        setSession(s => s ? { ...s, status: 'finished' } : s)
+      }
+      
       // Keluar dari Fullscreen jika selesai
       if (document.fullscreenElement) {
         document.exitFullscreen()
@@ -257,13 +265,27 @@ export default function ExamPage() {
     </main>
   )
 
-  if (session.status === 'finished') return (
-    <main className="p-6 text-center min-h-screen flex flex-col justify-center items-center">
-      <h1 className="text-3xl font-bold mb-4">Ujian Selesai</h1>
-      <p className="text-gray-600 mb-8">Jawaban Anda telah berhasil disimpan.</p>
-      <button onClick={() => router.push('/')} className="bg-blue-600 text-white px-6 py-2 rounded">Kembali ke Login</button>
-    </main>
-  )
+  // ===== HALAMAN SELESAI (TAMPILAN NILAI BARU) =====
+  if (session.status === 'finished') {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-green-50">
+        <div className="text-center p-8 bg-white rounded shadow max-w-md w-full border-4 border-green-500">
+          <h1 className="text-3xl font-bold text-green-700 mb-2">Ujian Selesai!</h1>
+          <p className="text-gray-600 mb-6">Jawaban Anda telah berhasil disimpan.</p>
+          
+          <div className="bg-gray-100 p-6 rounded-lg mb-6">
+            <p className="text-sm text-gray-500 mb-2">Nilai Anda:</p>
+            <p className="text-6xl font-bold text-blue-700">{session.score !== null ? session.score : '...'}</p>
+            <p className="text-sm text-gray-500 mt-2">dari 100</p>
+          </div>
+
+          <button onClick={() => router.push('/')} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded font-bold w-full">
+            Kembali ke Halaman Login
+          </button>
+        </div>
+      </main>
+    )
+  }
 
   const currentQ = questions[currentIdx]
   const minutesElapsed = Math.floor(timeElapsed / 60)

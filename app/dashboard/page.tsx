@@ -5,7 +5,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 
-type Row = { id: string; status: string; locked_at: string|null; user_id: string; profiles: { full_name: string } }
+type Row = { id: string; status: string; locked_at: string|null; user_id: string; profiles: { full_name: string }; score: number|null }
 type Exam = { id: string; title: string; is_open: boolean }
 
 export default function Dashboard() {
@@ -22,10 +22,10 @@ export default function Dashboard() {
       if (prof) setRole(prof.role)
     }
 
-    // 2. Load Sesi Siswa
+    // 2. Load Sesi Siswa (Tambahkan 'score')
     const { data: sData } = await supabase
       .from('sessions')
-      .select('id, status, locked_at, user_id, profiles(full_name)')
+      .select('id, status, locked_at, user_id, score, profiles(full_name)')
       .order('locked_at', { ascending: false, nullsFirst: false })
     setRows((sData as any) || [])
 
@@ -61,6 +61,7 @@ export default function Dashboard() {
   }
 
   const locked = rows.filter(r => r.status === 'locked')
+  const done = rows.filter(r => r.status === 'finished') // Filter untuk siswa yang sudah selesai
 
   return (
     <main className="p-6 max-w-6xl mx-auto">
@@ -80,7 +81,8 @@ export default function Dashboard() {
         
         {/* TOMBOL UNTUK SEMUA (GURU & ADMIN) */}
         <div className="flex flex-wrap gap-2">
-          <button onClick={() => router.push('/dashboard/analisis')} className="bg-blue-600 text-white px-4 py-2 rounded shadow text-sm font-medium">📊 Analisis Nilai</button>
+          <button onClick={() => router.push('/dashboard/rekap')} className="bg-orange-500 text-white px-4 py-2 rounded shadow text-sm font-medium">🏆 Rekap Nilai</button>
+          <button onClick={() => router.push('/dashboard/analisis')} className="bg-blue-600 text-white px-4 py-2 rounded shadow text-sm font-medium">📊 Analisis Butir Soal</button>
           <button onClick={() => { supabase.auth.signOut(); router.push('/') }} className="bg-red-600 text-white px-4 py-2 rounded shadow text-sm font-medium">Logout</button>
         </div>
       </div>
@@ -120,6 +122,30 @@ export default function Dashboard() {
               </tr>
             ))}
             {locked.length===0 && <tr className="bg-white"><td colSpan={3} className="p-4 text-gray-500 text-center">Tidak ada siswa terkunci.</td></tr>}
+          </tbody>
+        </table>
+      </section>
+
+      {/* TABEL REKAP NILAI (GURU & ADMIN) */}
+      <section className="mb-6 mt-10">
+        <h2 className="text-blue-700 font-semibold mb-2">📊 Rekap Nilai Siswa</h2>
+        <table className="w-full border">
+          <thead>
+            <tr className="bg-blue-50">
+              <th className="text-left p-2">Nama Siswa</th>
+              <th className="text-left p-2">Status</th>
+              <th className="text-left p-2">Nilai</th>
+            </tr>
+          </thead>
+          <tbody>
+            {done.map(r => (
+              <tr key={r.id} className="border-t bg-white">
+                <td className="p-2">{r.profiles?.full_name || r.user_id.slice(0,8)}</td>
+                <td className="p-2 text-green-600 font-medium">Selesai</td>
+                <td className="p-2 font-bold text-lg">{r.score !== null ? r.score : '-'}</td>
+              </tr>
+            ))}
+            {done.length===0 && <tr className="bg-white"><td colSpan={3} className="p-4 text-gray-500 text-center">Belum ada siswa yang selesai ujian.</td></tr>}
           </tbody>
         </table>
       </section>
