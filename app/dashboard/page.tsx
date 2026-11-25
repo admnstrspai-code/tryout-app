@@ -12,16 +12,24 @@ export default function Dashboard() {
   const router = useRouter()
   const [rows, setRows] = useState<Row[]>([])
   const [exams, setExams] = useState<Exam[]>([])
+  const [role, setRole] = useState<string>('guru') // Default asumsi guru
 
   const loadData = useCallback(async () => {
-    // Load Sesi Siswa
+    // 1. Cek Role User
+    const { data: { user } } = await supabase.auth.getUser()
+    if (user) {
+      const { data: prof } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+      if (prof) setRole(prof.role)
+    }
+
+    // 2. Load Sesi Siswa
     const { data: sData } = await supabase
       .from('sessions')
       .select('id, status, locked_at, user_id, profiles(full_name)')
       .order('locked_at', { ascending: false, nullsFirst: false })
     setRows((sData as any) || [])
 
-    // Load Daftar Ujian
+    // 3. Load Daftar Ujian
     const { data: eData } = await supabase.from('exams').select('*').order('title')
     if (eData) setExams(eData)
   }, [])
@@ -32,17 +40,13 @@ export default function Dashboard() {
     return () => { supabase.removeChannel(ch) }
   }, [loadData])
 
-  // Fungsi Buka/Tutup Ujian
   const toggleExam = async (id: string, currentStatus: boolean) => {
     if (currentStatus) {
       if (!confirm('Tutup ujian ini? Siswa tidak akan bisa masuk lagi.')) return
     }
-    
-    // Jika akan membuka ujian, tutup semua ujian lain dulu agar siswa tidak bingung
     if (!currentStatus) {
       await supabase.from('exams').update({ is_open: false }).neq('id', '00000000-0000-0000-0000-000000000000')
     }
-
     await supabase.from('exams').update({ is_open: !currentStatus }).eq('id', id)
     loadData()
   }
@@ -61,34 +65,48 @@ export default function Dashboard() {
   return (
     <main className="p-6 max-w-6xl mx-auto">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-        <h1 className="text-2xl font-bold">Dashboard Pengawas</h1>
+        <div>
+          <h1 className="text-2xl font-bold">Dashboard Pengawas</h1>
+          <p className="text-sm text-gray-500">Login sebagai: <strong className="uppercase text-blue-600">{role}</strong></p>
+        </div>
+        
+        {/* TOMBOL KHUSUS ADMIN */}
+        {role === 'admin' && (
+          <div className="flex flex-wrap gap-2">
+            <button onClick={() => router.push('/dashboard/soal')} className="bg-purple-600 text-white px-4 py-2 rounded shadow text-sm font-medium">📝 Input Soal</button>
+            <button onClick={() => router.push('/dashboard/siswa')} className="bg-green-600 text-white px-4 py-2 rounded shadow text-sm font-medium">👥 Import Siswa</button>
+          </div>
+        )}
+        
+        {/* TOMBOL UNTUK SEMUA (GURU & ADMIN) */}
         <div className="flex flex-wrap gap-2">
-          <button onClick={() => router.push('/dashboard/soal')} className="bg-purple-600 text-white px-4 py-2 rounded shadow text-sm font-medium">📝 Input Soal</button>
-          <button onClick={() => router.push('/dashboard/siswa')} className="bg-green-600 text-white px-4 py-2 rounded shadow text-sm font-medium">👥 Import Siswa</button>
           <button onClick={() => router.push('/dashboard/analisis')} className="bg-blue-600 text-white px-4 py-2 rounded shadow text-sm font-medium">📊 Analisis Nilai</button>
+          <button onClick={() => { supabase.auth.signOut(); router.push('/') }} className="bg-red-600 text-white px-4 py-2 rounded shadow text-sm font-medium">Logout</button>
         </div>
       </div>
 
-      {/* PANEL KONTROL UJIAN */}
-      <section className="mb-8 p-4 bg-gray-50 border rounded-lg">
-        <h2 className="font-bold text-lg mb-4">Kontrol Status Ujian</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {exams.map(ex => (
-            <div key={ex.id} className={`p-4 rounded border-2 ${ex.is_open ? 'border-green-500 bg-green-50' : 'border-gray-300 bg-white'}`}>
-              <h3 className="font-bold text-lg mb-2">{ex.title}</h3>
-              <p className="text-sm mb-4">Status: <strong className={ex.is_open ? 'text-green-600' : 'text-red-600'}>{ex.is_open ? 'TERBUKA (Siswa Bisa Masuk)' : 'TERTUTUP'}</strong></p>
-              <button 
-                onClick={() => toggleExam(ex.id, ex.is_open)}
-                className={`w-full py-2 rounded font-bold text-white ${ex.is_open ? 'bg-red-500 hover:bg-red-600' : 'bg-green-600 hover:bg-green-700'}`}
-              >
-                {ex.is_open ? 'Tutup Ujian Ini' : 'Buka Ujian Ini'}
-              </button>
-            </div>
-          ))}
-        </div>
-      </section>
+      {/* PANEL KONTROL UJIAN (HANYA ADMIN) */}
+      {role === 'admin' && (
+        <section className="mb-8 p-4 bg-gray-50 border rounded-lg">
+          <h2 className="font-bold text-lg mb-4">Kontrol Status Ujian (Khusus Admin)</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {exams.map(ex => (
+              <div key={ex.id} className={`p-4 rounded border-2 ${ex.is_open ? 'border-green-500 bg-green-50' : 'border-gray-300 bg-white'}`}>
+                <h3 className="font-bold text-lg mb-2">{ex.title}</h3>
+                <p className="text-sm mb-4">Status: <strong className={ex.is_open ? 'text-green-600' : 'text-red-600'}>{ex.is_open ? 'TERBUKA' : 'TERTUTUP'}</strong></p>
+                <button 
+                  onClick={() => toggleExam(ex.id, ex.is_open)}
+                  className={`w-full py-2 rounded font-bold text-white ${ex.is_open ? 'bg-red-500 hover:bg-red-600' : 'bg-green-600 hover:bg-green-700'}`}
+                >
+                  {ex.is_open ? 'Tutup Ujian Ini' : 'Buka Ujian Ini'}
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
-      {/* TABEL SISWA TERKUNCI */}
+      {/* TABEL SISWA TERKUNCI (GURU & ADMIN) */}
       <section className="mb-6">
         <h2 className="text-red-700 font-semibold mb-2">🔴 Siswa Terkunci ({locked.length})</h2>
         <table className="w-full border">
