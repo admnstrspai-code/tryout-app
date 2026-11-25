@@ -16,14 +16,20 @@ type Soal = {
   correct_option: string
 }
 
+type Exam = {
+  id: string
+  title: string
+}
+
 export default function ManajemenSoal() {
   const router = useRouter()
-  const [examId, setExamId] = useState<string>('')
+  const [exams, setExams] = useState<Exam[]>([])
+  const [selectedExamId, setSelectedExamId] = useState<string>('')
+  
   const [questions, setQuestions] = useState<Soal[]>([])
   const [loading, setLoading] = useState(false)
   const [msg, setMsg] = useState('')
 
-  // State untuk TABS (Manual atau Excel)
   const [activeTab, setActiveTab] = useState<'manual' | 'excel'>('manual')
 
   // State Form Manual
@@ -39,35 +45,45 @@ export default function ManajemenSoal() {
   // State Import Excel
   const [excelText, setExcelText] = useState('')
 
-  // 1. Ambil ID Ujian & Daftar Soal
-  const loadData = useCallback(async () => {
-    const { data: exam } = await supabase.from('exams').select('id').eq('is_open', true).limit(1).single()
-    if (exam) {
-      setExamId(exam.id)
-      const { data: qs } = await supabase.from('questions').select('*').eq('exam_id', exam.id).order('number')
-      if (qs) setQuestions(qs)
-      
-      if (qs && qs.length > 0 && !editId) {
-        setNumber(Math.max(...qs.map(q => q.number)) + 1)
+  // 1. Ambil Daftar Ujian (TO 1, TO 2, TO 3)
+  useEffect(() => {
+    const fetchExams = async () => {
+      const { data } = await supabase.from('exams').select('id, title').order('title')
+      if (data && data.length > 0) {
+        setExams(data)
+        setSelectedExamId(data[0].id) // Pilih TO pertama secara otomatis
       }
-    } else {
-      setMsg('Tidak ada ujian aktif di database.')
     }
-  }, [editId])
+    fetchExams()
+  }, [])
+
+  // 2. Ambil Soal berdasarkan Ujian yang Dipilih
+  const loadData = useCallback(async () => {
+    if (!selectedExamId) return
+    const { data: qs } = await supabase.from('questions').select('*').eq('exam_id', selectedExamId).order('number')
+    if (qs) {
+      setQuestions(qs)
+      if (qs.length > 0 && !editId) {
+        setNumber(Math.max(...qs.map(q => q.number)) + 1)
+      } else if (qs.length === 0) {
+        setNumber(1)
+      }
+    }
+  }, [selectedExamId, editId])
 
   useEffect(() => {
     loadData()
   }, [loadData])
 
-  // 2. Simpan Soal (Manual)
+  // 3. Simpan Soal (Manual)
   const handleSaveManual = async (e: any) => {
     e.preventDefault()
-    if (!examId) return alert('Ujian tidak ditemukan')
+    if (!selectedExamId) return alert('Pilih ujian terlebih dahulu')
     setLoading(true)
     setMsg('')
 
     const payload = {
-      exam_id: examId, number, question,
+      exam_id: selectedExamId, number, question,
       option_a: optionA, option_b: optionB, option_c: optionC, option_d: optionD,
       correct_option: correctOption
     }
@@ -91,24 +107,22 @@ export default function ManajemenSoal() {
     setLoading(false)
   }
 
-  // 3. Simpan Soal Massal (Excel Paste)
+  // 4. Simpan Soal Massal (Excel Paste)
   const handleSaveExcel = async () => {
-    if (!examId) return alert('Ujian tidak ditemukan')
+    if (!selectedExamId) return alert('Pilih ujian terlebih dahulu')
     if (!excelText.trim()) return alert('Data Excel masih kosong!')
     setLoading(true)
     setMsg('')
 
     try {
-      // Memecah teks berdasarkan baris enter
       const lines = excelText.trim().split('\n')
       const payloads = []
 
       for (const line of lines) {
-        // Memecah kolom berdasarkan Tab (karakter pemisah otomatis dari Excel)
         const cols = line.split('\t')
         if (cols.length >= 7) {
           payloads.push({
-            exam_id: examId,
+            exam_id: selectedExamId,
             number: parseInt(cols[0].trim()),
             question: cols[1].trim(),
             option_a: cols[2].trim(),
@@ -122,7 +136,6 @@ export default function ManajemenSoal() {
 
       if (payloads.length === 0) throw new Error('Format tidak sesuai. Pastikan ada 7 kolom dan dipisahkan Tab.')
 
-      // Simpan semuanya ke database sekaligus
       const { error } = await supabase.from('questions').insert(payloads)
       if (error) throw error
 
@@ -136,7 +149,6 @@ export default function ManajemenSoal() {
     }
   }
 
-  // 4. Hapus & Edit
   const handleDelete = async (id: string) => {
     if (!confirm('Yakin ingin menghapus soal ini?')) return
     const { error } = await supabase.from('questions').delete().eq('id', id)
@@ -177,6 +189,20 @@ export default function ManajemenSoal() {
         <button onClick={() => router.push('/dashboard')} className="bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded text-sm font-medium">
           ← Kembali ke Dashboard
         </button>
+      </div>
+
+      {/* PILIHAN UJIAN */}
+      <div className="bg-white p-4 rounded-lg shadow-sm border mb-6">
+        <label className="block text-sm font-bold mb-2 text-gray-700">Pilih Paket Ujian yang Ingin Dikelola:</label>
+        <select 
+          className="w-full md:w-1/2 border-2 border-blue-500 p-2 rounded font-medium text-lg"
+          value={selectedExamId}
+          onChange={(e) => setSelectedExamId(e.target.value)}
+        >
+          {exams.map(ex => (
+            <option key={ex.id} value={ex.id}>{ex.title}</option>
+          ))}
+        </select>
       </div>
 
       {msg && (
@@ -309,7 +335,7 @@ export default function ManajemenSoal() {
               </tr>
             ))}
             {questions.length === 0 && (
-              <tr><td colSpan={4} className="p-4 text-center text-gray-500">Belum ada soal.</td></tr>
+              <tr><td colSpan={4} className="p-4 text-center text-gray-500">Belum ada soal untuk paket ujian ini.</td></tr>
             )}
           </tbody>
         </table>

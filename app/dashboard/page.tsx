@@ -6,108 +6,104 @@ import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 
 type Row = { id: string; status: string; locked_at: string|null; user_id: string; profiles: { full_name: string } }
+type Exam = { id: string; title: string; is_open: boolean }
 
 export default function Dashboard() {
   const router = useRouter()
   const [rows, setRows] = useState<Row[]>([])
+  const [exams, setExams] = useState<Exam[]>([])
 
-  const load = useCallback(async () => {
-    const { data, error } = await supabase
+  const loadData = useCallback(async () => {
+    // Load Sesi Siswa
+    const { data: sData } = await supabase
       .from('sessions')
       .select('id, status, locked_at, user_id, profiles(full_name)')
       .order('locked_at', { ascending: false, nullsFirst: false })
+    setRows((sData as any) || [])
 
-    if (error) {
-      console.error('[dashboard load]', error)
-      return
-    }
-    setRows((data as any) || [])
+    // Load Daftar Ujian
+    const { data: eData } = await supabase.from('exams').select('*').order('title')
+    if (eData) setExams(eData)
   }, [])
 
   useEffect(() => {
-    load()
-    const ch = supabase.channel('guru')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions' }, load)
-      .subscribe()
+    loadData()
+    const ch = supabase.channel('guru').on('postgres_changes', { event: '*', schema: 'public', table: 'sessions' }, loadData).subscribe()
     return () => { supabase.removeChannel(ch) }
-  }, [load])
+  }, [loadData])
+
+  // Fungsi Buka/Tutup Ujian
+  const toggleExam = async (id: string, currentStatus: boolean) => {
+    if (currentStatus) {
+      if (!confirm('Tutup ujian ini? Siswa tidak akan bisa masuk lagi.')) return
+    }
+    
+    // Jika akan membuka ujian, tutup semua ujian lain dulu agar siswa tidak bingung
+    if (!currentStatus) {
+      await supabase.from('exams').update({ is_open: false }).neq('id', '00000000-0000-0000-0000-000000000000')
+    }
+
+    await supabase.from('exams').update({ is_open: !currentStatus }).eq('id', id)
+    loadData()
+  }
 
   const unlock = async (id: string) => {
-    const yakin = confirm('Yakin ingin membuka kunci (unlock) siswa ini?\n\nKlik OK atau tekan Enter untuk melanjutkan.')
+    const yakin = confirm('Yakin ingin membuka kunci siswa ini?')
     if (yakin) {
       const { error } = await supabase.rpc('unlock_session', { p_session_id: id })
       if (error) alert(error.message)
-      else load()
+      else loadData()
     }
   }
 
   const locked = rows.filter(r => r.status === 'locked')
-  const active = rows.filter(r => r.status === 'active')
-  const done   = rows.filter(r => r.status === 'finished')
 
   return (
-    <main className="p-6">
+    <main className="p-6 max-w-6xl mx-auto">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <h1 className="text-2xl font-bold">Dashboard Pengawas</h1>
         <div className="flex flex-wrap gap-2">
-          <button 
-            onClick={() => router.push('/dashboard/soal')}
-            className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded shadow text-sm font-medium"
-          >
-            📝 Input Soal
-          </button>
-          <button 
-            onClick={() => router.push('/dashboard/siswa')}
-            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded shadow text-sm font-medium"
-          >
-            👥 Import Siswa
-          </button>
-          <button 
-            onClick={() => router.push('/dashboard/analisis')}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow text-sm font-medium"
-          >
-            📊 Lihat Analisis
-          </button>
+          <button onClick={() => router.push('/dashboard/soal')} className="bg-purple-600 text-white px-4 py-2 rounded shadow text-sm font-medium">📝 Input Soal</button>
+          <button onClick={() => router.push('/dashboard/siswa')} className="bg-green-600 text-white px-4 py-2 rounded shadow text-sm font-medium">👥 Import Siswa</button>
+          <button onClick={() => router.push('/dashboard/analisis')} className="bg-blue-600 text-white px-4 py-2 rounded shadow text-sm font-medium">📊 Analisis Nilai</button>
         </div>
       </div>
 
-      <section className="mb-6">
-        <h2 className="text-red-700 font-semibold">🔴 Terkunci ({locked.length})</h2>
-        <table className="w-full mt-2 border">
-          <thead>
-            <tr className="bg-red-50">
-              <th className="text-left p-2">Siswa</th>
-              <th className="text-left p-2">Locked sejak</th>
-              <th className="text-left p-2">Aksi</th>
-            </tr>
-          </thead>
-          <tbody>
-            {locked.map(r => (
-              <tr key={r.id} className="border-t">
-                <td className="p-2">{r.profiles?.full_name || r.user_id.slice(0,8)}</td>
-                <td className="p-2">{r.locked_at ? new Date(r.locked_at).toLocaleTimeString() : '-'}</td>
-                <td className="p-2">
-                  <button onClick={()=>unlock(r.id)} className="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded">
-                    Unlock
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {locked.length===0 && (
-              <tr>
-                <td colSpan={3} className="p-2 text-gray-500">Tidak ada siswa terkunci.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+      {/* PANEL KONTROL UJIAN */}
+      <section className="mb-8 p-4 bg-gray-50 border rounded-lg">
+        <h2 className="font-bold text-lg mb-4">Kontrol Status Ujian</h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {exams.map(ex => (
+            <div key={ex.id} className={`p-4 rounded border-2 ${ex.is_open ? 'border-green-500 bg-green-50' : 'border-gray-300 bg-white'}`}>
+              <h3 className="font-bold text-lg mb-2">{ex.title}</h3>
+              <p className="text-sm mb-4">Status: <strong className={ex.is_open ? 'text-green-600' : 'text-red-600'}>{ex.is_open ? 'TERBUKA (Siswa Bisa Masuk)' : 'TERTUTUP'}</strong></p>
+              <button 
+                onClick={() => toggleExam(ex.id, ex.is_open)}
+                className={`w-full py-2 rounded font-bold text-white ${ex.is_open ? 'bg-red-500 hover:bg-red-600' : 'bg-green-600 hover:bg-green-700'}`}
+              >
+                {ex.is_open ? 'Tutup Ujian Ini' : 'Buka Ujian Ini'}
+              </button>
+            </div>
+          ))}
+        </div>
       </section>
 
+      {/* TABEL SISWA TERKUNCI */}
       <section className="mb-6">
-        <h2 className="text-green-700 font-semibold">🟢 Aktif ({active.length})</h2>
-      </section>
-      
-      <section>
-        <h2 className="text-gray-700 font-semibold">✅ Selesai ({done.length})</h2>
+        <h2 className="text-red-700 font-semibold mb-2">🔴 Siswa Terkunci ({locked.length})</h2>
+        <table className="w-full border">
+          <thead><tr className="bg-red-50"><th className="text-left p-2">Siswa</th><th className="text-left p-2">Waktu</th><th className="text-left p-2">Aksi</th></tr></thead>
+          <tbody>
+            {locked.map(r => (
+              <tr key={r.id} className="border-t bg-white">
+                <td className="p-2">{r.profiles?.full_name || r.user_id.slice(0,8)}</td>
+                <td className="p-2">{r.locked_at ? new Date(r.locked_at).toLocaleTimeString() : '-'}</td>
+                <td className="p-2"><button onClick={()=>unlock(r.id)} className="bg-red-600 text-white px-3 py-1 rounded">Buka Kunci</button></td>
+              </tr>
+            ))}
+            {locked.length===0 && <tr className="bg-white"><td colSpan={3} className="p-4 text-gray-500 text-center">Tidak ada siswa terkunci.</td></tr>}
+          </tbody>
+        </table>
       </section>
     </main>
   )
