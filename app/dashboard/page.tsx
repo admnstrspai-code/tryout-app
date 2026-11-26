@@ -5,25 +5,29 @@ import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 
-type Row = { id: string; status: string; locked_at: string|null; user_id: string; profiles: { full_name: string }; score: number|null }
+type Row = { id: string; status: string; locked_at: string|null; user_id: string; profiles: { full_name: string; sekolah: string }; score: number|null }
 type Exam = { id: string; title: string; is_open: boolean }
 
 export default function Dashboard() {
   const router = useRouter()
   const [rows, setRows] = useState<Row[]>([])
   const [exams, setExams] = useState<Exam[]>([])
-  const [role, setRole] = useState<string>('guru')
+  const [role, setRole] = useState<string>('')
+  const [sekolah, setSekolah] = useState<string>('')
 
   const loadData = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (user) {
-      const { data: prof } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-      if (prof) setRole(prof.role)
+      const { data: prof } = await supabase.from('profiles').select('role, sekolah').eq('id', user.id).single()
+      if (prof) {
+        setRole(prof.role)
+        setSekolah(prof.sekolah || '')
+      }
     }
 
     const { data: sData } = await supabase
       .from('sessions')
-      .select('id, status, locked_at, user_id, score, profiles(full_name)')
+      .select('id, status, locked_at, user_id, score, profiles(full_name, sekolah)')
       .order('locked_at', { ascending: false, nullsFirst: false })
     setRows((sData as any) || [])
 
@@ -59,35 +63,50 @@ export default function Dashboard() {
 
   const locked = rows.filter(r => r.status === 'locked')
   const done = rows.filter(r => r.status === 'finished')
+  
+  // CEK HAK AKSES
+  const isSuperAdmin = role === 'admin'
+  const isPanitia = role === 'admin' || role === 'panitia'
+  const isPengawas = role !== '' // Semua role selain siswa bisa akses dashboard
 
   return (
     <main className="p-6 max-w-6xl mx-auto">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div>
           <h1 className="text-2xl font-bold">Dashboard Pengawas</h1>
-          <p className="text-sm text-gray-500">Login sebagai: <strong className="uppercase text-blue-600">{role}</strong></p>
+          <p className="text-sm text-gray-600">
+            Login sebagai: <strong className="uppercase text-blue-600">{role}</strong> 
+            {sekolah && ` | Sekolah: ${sekolah}`}
+          </p>
         </div>
         
-        {role === 'admin' && (
-          <div className="flex flex-wrap gap-2">
-            <button onClick={() => router.push('/dashboard/soal')} className="bg-purple-600 text-white px-4 py-2 rounded shadow text-sm font-medium">📝 Input Soal</button>
-            <button onClick={() => router.push('/dashboard/siswa')} className="bg-green-600 text-white px-4 py-2 rounded shadow text-sm font-medium">👥 Import Siswa</button>
-          </div>
-        )}
-        
         <div className="flex flex-wrap gap-2">
-          <button onClick={() => router.push('/dashboard/rekap')} className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded shadow text-sm font-medium">🏆 Rekap Nilai</button>
-          <button onClick={() => router.push('/dashboard/analisis')} className="bg-blue-600 text-white px-4 py-2 rounded shadow text-sm font-medium">📊 Analisis Butir</button>
+          {/* HANYA ADMIN & PANITIA YANG BISA LIHAT INI */}
+          {isPanitia && (
+            <>
+              <button onClick={() => router.push('/dashboard/soal')} className="bg-purple-600 text-white px-4 py-2 rounded shadow text-sm font-medium">📝 Input Soal</button>
+              <button onClick={() => router.push('/dashboard/siswa')} className="bg-green-600 text-white px-4 py-2 rounded shadow text-sm font-medium">👥 Import Siswa</button>
+            </>
+          )}
+          
+          <button onClick={() => router.push('/dashboard/rekap')} className="bg-orange-500 text-white px-4 py-2 rounded shadow text-sm font-medium">🏆 Rekap Nilai</button>
+          
+          {/* HANYA ADMIN & PANITIA YANG BISA LIHAT ANALISIS */}
+          {isPanitia && (
+            <button onClick={() => router.push('/dashboard/analisis')} className="bg-blue-600 text-white px-4 py-2 rounded shadow text-sm font-medium">📊 Analisis Butir</button>
+          )}
+          
           <button onClick={() => { supabase.auth.signOut(); router.push('/') }} className="bg-red-600 text-white px-4 py-2 rounded shadow text-sm font-medium">Logout</button>
         </div>
       </div>
 
-      {role === 'admin' && (
-        <section className="mb-8 p-4 bg-gray-50 border rounded-lg">
-          <h2 className="font-bold text-lg mb-4">Kontrol Status Ujian (Khusus Admin)</h2>
+      {/* KONTROL UJIAN: HANYA SUPER ADMIN */}
+      {isSuperAdmin && (
+        <section className="mb-8 p-4 bg-yellow-50 border border-yellow-300 rounded-lg">
+          <h2 className="font-bold text-lg mb-4 text-yellow-800">👑 Kontrol Status Ujian (Super Admin Only)</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {exams.map(ex => (
-              <div key={ex.id} className={`p-4 rounded border-2 ${ex.is_open ? 'border-green-500 bg-green-50' : 'border-gray-300 bg-white'}`}>
+              <div key={ex.id} className={`p-4 rounded border-2 bg-white ${ex.is_open ? 'border-green-500' : 'border-gray-300'}`}>
                 <h3 className="font-bold text-lg mb-2">{ex.title}</h3>
                 <p className="text-sm mb-4">Status: <strong className={ex.is_open ? 'text-green-600' : 'text-red-600'}>{ex.is_open ? 'TERBUKA' : 'TERTUTUP'}</strong></p>
                 <button 
@@ -102,29 +121,33 @@ export default function Dashboard() {
         </section>
       )}
 
+      {/* TABEL SISWA TERKUNCI */}
       <section className="mb-6">
         <h2 className="text-red-700 font-semibold mb-2">🔴 Siswa Terkunci ({locked.length})</h2>
         <table className="w-full border">
-          <thead><tr className="bg-red-50"><th className="text-left p-2">Siswa</th><th className="text-left p-2">Waktu</th><th className="text-left p-2">Aksi</th></tr></thead>
+          <thead><tr className="bg-red-50"><th className="text-left p-2">Siswa</th><th className="text-left p-2">Sekolah</th><th className="text-left p-2">Waktu</th><th className="text-left p-2">Aksi</th></tr></thead>
           <tbody>
             {locked.map(r => (
               <tr key={r.id} className="border-t bg-white">
                 <td className="p-2">{r.profiles?.full_name || r.user_id.slice(0,8)}</td>
-                <td className="p-2">{r.locked_at ? new Date(r.locked_at).toLocaleTimeString() : '-'}</td>
-                <td className="p-2"><button onClick={()=>unlock(r.id)} className="bg-red-600 text-white px-3 py-1 rounded">Buka Kunci</button></td>
+                <td className="p-2 text-sm text-gray-600">{r.profiles?.sekolah || '-'}</td>
+                <td className="p-2 text-sm">{r.locked_at ? new Date(r.locked_at).toLocaleTimeString() : '-'}</td>
+                <td className="p-2"><button onClick={()=>unlock(r.id)} className="bg-red-600 text-white px-3 py-1 rounded text-sm">Buka Kunci</button></td>
               </tr>
             ))}
-            {locked.length===0 && <tr className="bg-white"><td colSpan={3} className="p-4 text-gray-500 text-center">Tidak ada siswa terkunci.</td></tr>}
+            {locked.length===0 && <tr className="bg-white"><td colSpan={4} className="p-4 text-gray-500 text-center">Tidak ada siswa terkunci.</td></tr>}
           </tbody>
         </table>
       </section>
 
+      {/* TABEL REKAP NILAI */}
       <section className="mb-6 mt-10">
         <h2 className="text-blue-700 font-semibold mb-2">📊 Rekap Nilai Siswa</h2>
         <table className="w-full border">
           <thead>
             <tr className="bg-blue-50">
               <th className="text-left p-2">Nama Siswa</th>
+              <th className="text-left p-2">Sekolah</th>
               <th className="text-left p-2">Status</th>
               <th className="text-left p-2">Nilai</th>
             </tr>
@@ -133,11 +156,12 @@ export default function Dashboard() {
             {done.map(r => (
               <tr key={r.id} className="border-t bg-white">
                 <td className="p-2">{r.profiles?.full_name || r.user_id.slice(0,8)}</td>
-                <td className="p-2 text-green-600 font-medium">Selesai</td>
+                <td className="p-2 text-sm text-gray-600">{r.profiles?.sekolah || '-'}</td>
+                <td className="p-2 text-green-600 font-medium text-sm">Selesai</td>
                 <td className="p-2 font-bold text-lg">{r.score !== null ? r.score : '-'}</td>
               </tr>
             ))}
-            {done.length===0 && <tr className="bg-white"><td colSpan={3} className="p-4 text-gray-500 text-center">Belum ada siswa yang selesai ujian.</td></tr>}
+            {done.length===0 && <tr className="bg-white"><td colSpan={4} className="p-4 text-gray-500 text-center">Belum ada siswa yang selesai ujian.</td></tr>}
           </tbody>
         </table>
       </section>

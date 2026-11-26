@@ -21,8 +21,8 @@ export default function Home() {
     const { data: { user } } = await supabase.auth.getUser()
     const { data: prof } = await supabase.from('profiles').select('role').eq('id', user!.id).single()
     
-    // PERBAIKAN: Jika role-nya 'guru' ATAU 'admin', masuk ke dashboard
-    if (prof?.role === 'guru' || prof?.role === 'admin') {
+    // Jika role-nya bukan siswa, lempar ke dashboard
+    if (prof?.role && prof.role !== 'siswa') {
       router.push('/dashboard')
     } else {
       router.push('/exam')
@@ -36,26 +36,12 @@ export default function Home() {
       <form onSubmit={submit} className="space-y-4">
         <div>
           <label className="block text-sm font-medium mb-1">Email</label>
-          <input 
-            className="border p-2 w-full rounded" 
-            type="email" 
-            placeholder="Masukkan email" 
-            value={email} 
-            onChange={e=>setEmail(e.target.value)} 
-            required
-          />
+          <input className="border p-2 w-full rounded" type="email" placeholder="Masukkan email" value={email} onChange={e=>setEmail(e.target.value)} required />
         </div>
         
         <div>
           <label className="block text-sm font-medium mb-1">Password</label>
-          <input 
-            className="border p-2 w-full rounded" 
-            type="password" 
-            placeholder="Masukkan password" 
-            value={pass} 
-            onChange={e=>setPass(e.target.value)} 
-            required
-          />
+          <input className="border p-2 w-full rounded" type="password" placeholder="Masukkan password" value={pass} onChange={e=>setPass(e.target.value)} required />
         </div>
 
         <button className="bg-black hover:bg-gray-800 text-white p-2 w-full rounded font-bold mt-2">
