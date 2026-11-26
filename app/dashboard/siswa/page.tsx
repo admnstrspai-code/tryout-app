@@ -16,8 +16,9 @@ export default function ImportSiswa() {
     // Memecah teks berdasarkan baris baru
     const lines = text.trim().split('\n')
     const users = lines.map(line => {
-      const [full_name, email, password] = line.split(',').map(s => s.trim())
-      return { full_name, email, password }
+      // Format: Nama, Sekolah, Email, Password
+      const [full_name, sekolah, email, password] = line.split(',').map(s => s.trim())
+      return { full_name, sekolah, email, password }
     }).filter(u => u.email && u.password)
 
     try {
@@ -38,12 +39,12 @@ export default function ImportSiswa() {
   return (
     <main className="p-6 max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold mb-2">Import Akun Siswa</h1>
-      <p className="text-gray-600 mb-6">Format: Nama Lengkap, Email, Password (Pisahkan dengan koma, satu baris satu siswa).</p>
+      <p className="text-gray-600 mb-6">Format: Nama Lengkap, Sekolah, Email, Password (Pisahkan dengan koma).</p>
 
       <div className="bg-blue-50 p-4 rounded mb-4 text-sm text-blue-800">
         <strong>Contoh Format:</strong><br />
-        Ahmad Fauzi, ahmad@test.com, rahasia123<br />
-        Budi Santoso, budi@test.com, rahasia123
+        Ahmad Fauzi, SMPN 1 Wates, ahmad@test.com, rahasia123<br />
+        Budi Santoso, SMPN 2 Wates, budi@test.com, rahasia123
       </div>
 
       <textarea

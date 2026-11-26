@@ -12,24 +12,21 @@ export default function Dashboard() {
   const router = useRouter()
   const [rows, setRows] = useState<Row[]>([])
   const [exams, setExams] = useState<Exam[]>([])
-  const [role, setRole] = useState<string>('guru') // Default asumsi guru
+  const [role, setRole] = useState<string>('guru')
 
   const loadData = useCallback(async () => {
-    // 1. Cek Role User
     const { data: { user } } = await supabase.auth.getUser()
     if (user) {
       const { data: prof } = await supabase.from('profiles').select('role').eq('id', user.id).single()
       if (prof) setRole(prof.role)
     }
 
-    // 2. Load Sesi Siswa (Tambahkan 'score')
     const { data: sData } = await supabase
       .from('sessions')
       .select('id, status, locked_at, user_id, score, profiles(full_name)')
       .order('locked_at', { ascending: false, nullsFirst: false })
     setRows((sData as any) || [])
 
-    // 3. Load Daftar Ujian
     const { data: eData } = await supabase.from('exams').select('*').order('title')
     if (eData) setExams(eData)
   }, [])
@@ -61,7 +58,7 @@ export default function Dashboard() {
   }
 
   const locked = rows.filter(r => r.status === 'locked')
-  const done = rows.filter(r => r.status === 'finished') // Filter untuk siswa yang sudah selesai
+  const done = rows.filter(r => r.status === 'finished')
 
   return (
     <main className="p-6 max-w-6xl mx-auto">
@@ -71,7 +68,6 @@ export default function Dashboard() {
           <p className="text-sm text-gray-500">Login sebagai: <strong className="uppercase text-blue-600">{role}</strong></p>
         </div>
         
-        {/* TOMBOL KHUSUS ADMIN */}
         {role === 'admin' && (
           <div className="flex flex-wrap gap-2">
             <button onClick={() => router.push('/dashboard/soal')} className="bg-purple-600 text-white px-4 py-2 rounded shadow text-sm font-medium">📝 Input Soal</button>
@@ -79,15 +75,13 @@ export default function Dashboard() {
           </div>
         )}
         
-        {/* TOMBOL UNTUK SEMUA (GURU & ADMIN) */}
         <div className="flex flex-wrap gap-2">
-          <button onClick={() => router.push('/dashboard/rekap')} className="bg-orange-500 text-white px-4 py-2 rounded shadow text-sm font-medium">🏆 Rekap Nilai</button>
-          <button onClick={() => router.push('/dashboard/analisis')} className="bg-blue-600 text-white px-4 py-2 rounded shadow text-sm font-medium">📊 Analisis Butir Soal</button>
+          <button onClick={() => router.push('/dashboard/rekap')} className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded shadow text-sm font-medium">🏆 Rekap Nilai</button>
+          <button onClick={() => router.push('/dashboard/analisis')} className="bg-blue-600 text-white px-4 py-2 rounded shadow text-sm font-medium">📊 Analisis Butir</button>
           <button onClick={() => { supabase.auth.signOut(); router.push('/') }} className="bg-red-600 text-white px-4 py-2 rounded shadow text-sm font-medium">Logout</button>
         </div>
       </div>
 
-      {/* PANEL KONTROL UJIAN (HANYA ADMIN) */}
       {role === 'admin' && (
         <section className="mb-8 p-4 bg-gray-50 border rounded-lg">
           <h2 className="font-bold text-lg mb-4">Kontrol Status Ujian (Khusus Admin)</h2>
@@ -108,7 +102,6 @@ export default function Dashboard() {
         </section>
       )}
 
-      {/* TABEL SISWA TERKUNCI (GURU & ADMIN) */}
       <section className="mb-6">
         <h2 className="text-red-700 font-semibold mb-2">🔴 Siswa Terkunci ({locked.length})</h2>
         <table className="w-full border">
@@ -126,7 +119,6 @@ export default function Dashboard() {
         </table>
       </section>
 
-      {/* TABEL REKAP NILAI (GURU & ADMIN) */}
       <section className="mb-6 mt-10">
         <h2 className="text-blue-700 font-semibold mb-2">📊 Rekap Nilai Siswa</h2>
         <table className="w-full border">

@@ -19,12 +19,15 @@ export async function POST(request: Request) {
         email: user.email,
         password: user.password,
         email_confirm: true,
-        user_metadata: { full_name: user.full_name }
+        user_metadata: { 
+          full_name: user.full_name,
+          sekolah: user.sekolah // Tambahan data sekolah
+        }
       })
 
       if (error) {
         failedCount++
-        errorMessages.push(`Gagal (${user.email}): ${error.message}`) // Simpan pesan error
+        errorMessages.push(`Gagal (${user.email}): ${error.message}`)
       } else {
         successCount++
       }
