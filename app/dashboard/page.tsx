@@ -39,19 +39,19 @@ export default function Dashboard() {
       .order('locked_at', { ascending: false, nullsFirst: false })
     setRows((sData as any) || [])
 
-        // 2. Jika yang login adalah Pengawas, ambil daftar siswa
+    // 2. Jika Pengawas, ambil daftar siswa (Gunakan ilike dan trim)
     if (currentRole === 'pengawas' && currentSekolah) {
       const { data: siswaData, error: siswaError } = await supabase
         .from('profiles')
         .select('id, full_name, email')
         .eq('role', 'siswa')
-        .ilike('sekolah', `%${currentSekolah.trim()}%`) // Gunakan % agar lebih longgar
+        .ilike('sekolah', currentSekolah.trim()) // Gunakan ilike agar tidak sensitif huruf
         .order('full_name')
       
       if (siswaError) {
         console.error("GAGAL AMBIL SISWA:", siswaError.message)
       } else {
-        console.log("BERHASIL AMBIL SISWA:", siswaData)
+        console.log("BERHASIL AMBIL SISWA:", siswaData) // <-- Cek di F12 Console
         if (siswaData) setSiswaSekolah(siswaData as Siswa[])
       }
     }
