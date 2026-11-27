@@ -39,13 +39,13 @@ export default function Dashboard() {
       .order('locked_at', { ascending: false, nullsFirst: false })
     setRows((sData as any) || [])
 
-    // 2. Jika yang login adalah Pengawas, ambil daftar semua siswa di sekolahnya
+    // 2. Jika yang login adalah Pengawas, ambil daftar siswa (Gunakan ilike agar tidak sensitif huruf besar/kecil)
     if (currentRole === 'pengawas' && currentSekolah) {
       const { data: siswaData } = await supabase
         .from('profiles')
         .select('id, full_name, email')
         .eq('role', 'siswa')
-        .eq('sekolah', currentSekolah)
+        .ilike('sekolah', currentSekolah) // <-- ilike membuat pencarian tidak peduli huruf besar/kecil
         .order('full_name')
       
       if (siswaData) setSiswaSekolah(siswaData as Siswa[])
@@ -118,7 +118,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* KONTROL UJIAN: HANYA SUPER ADMIN */}
       {isSuperAdmin && (
         <section className="mb-8 p-4 bg-yellow-50 border border-yellow-300 rounded-lg">
           <h2 className="font-bold text-lg mb-4 text-yellow-800">👑 Kontrol Status Ujian (Super Admin Only)</h2>
@@ -139,7 +138,6 @@ export default function Dashboard() {
         </section>
       )}
 
-      {/* TABEL SISWA TERKUNCI */}
       <section className="mb-6">
         <h2 className="text-red-700 font-semibold mb-2">🔴 Siswa Terkunci ({locked.length})</h2>
         <table className="w-full border">
@@ -158,7 +156,6 @@ export default function Dashboard() {
         </table>
       </section>
 
-      {/* MONITORING SISWA (HANYA UNTUK PENGAWAS) */}
       {isPengawas && (
         <section className="mb-6 mt-10">
           <div className="flex justify-between items-end mb-2">
@@ -176,7 +173,6 @@ export default function Dashboard() {
               </thead>
               <tbody>
                 {siswaSekolah.map((siswa) => {
-                  // Cari data sesi ujian siswa ini
                   const sesiSiswa = rows.find(r => r.user_id === siswa.id)
                   let statusLabel = 'Belum Login'
                   let statusColor = 'bg-gray-200 text-gray-700'
@@ -215,7 +211,6 @@ export default function Dashboard() {
         </section>
       )}
 
-      {/* TABEL REKAP NILAI (HANYA UNTUK ADMIN/PANITIA) */}
       {isPanitia && (
         <section className="mb-6 mt-10">
           <h2 className="text-blue-700 font-semibold mb-2">📊 Rekap Nilai Siswa</h2>
