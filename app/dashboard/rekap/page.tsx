@@ -16,32 +16,64 @@ export default function RekapNilai() {
   const [data, setData] = useState<Rekap[]>([])
   const [loading, setLoading] = useState(true)
   const [filterSekolah, setFilterSekolah] = useState('SEMUA')
+  
+  // State untuk mendeteksi siapa yang sedang login
+  const [role, setRole] = useState('')
+  const [mySekolah, setMySekolah] = useState('')
 
   useEffect(() => {
-    const fetchData = async () => {
-      const { data, error } = await supabase
+    const initData = async () => {
+      // 1. Ambil identitas user yang login
+      const { data: { user } } = await supabase.auth.getUser()
+      let currentRole = ''
+      let currentSekolah = ''
+
+      if (user) {
+        const { data: prof } = await supabase.from('profiles').select('role, sekolah').eq('id', user.id).single()
+        if (prof) {
+          setRole(prof.role)
+          setMySekolah(prof.sekolah || '')
+          currentRole = prof.role
+          currentSekolah = prof.sekolah || ''
+        }
+      }
+
+      // 2. Ambil data nilai
+      const { data: sData } = await supabase
         .from('sessions')
         .select('id, score, profiles(full_name, sekolah)')
         .eq('status', 'finished')
         .order('score', { ascending: false })
 
-      if (data) setData(data as any)
+      if (sData) setData(sData as any)
+      
+      // 3. Jika yang login adalah pengawas, otomatis kunci filternya ke sekolahnya
+      if (currentRole === 'pengawas' || currentRole === 'guru') {
+        setFilterSekolah(currentSekolah)
+      }
+
       setLoading(false)
     }
-    fetchData()
+    
+    initData()
   }, [])
 
+  // Daftar sekolah untuk dropdown (hanya untuk Admin/Panitia)
   const daftarSekolah = ['SEMUA', ...Array.from(new Set(data.map(d => d.profiles?.sekolah).filter(Boolean)))]
 
+  // Filter data
   const filteredData = filterSekolah === 'SEMUA' 
     ? data 
     : data.filter(d => d.profiles?.sekolah === filterSekolah)
 
   if (loading) return <p className="p-6 text-center">Memuat data nilai...</p>
 
+  // Cek apakah user adalah Admin/Panitia (yang boleh ganti-ganti filter)
+  const isAdminOrPanitia = role === 'admin' || role === 'panitia'
+
   return (
     <main className="p-6 max-w-5xl mx-auto">
-      {/* HEADER YANG HANYA MUNCUL SAAT DICETAK */}
+      {/* HEADER KHUSUS PRINT PDF */}
       <div className="hidden print:block text-center mb-8">
         <h1 className="text-2xl font-bold">LAPORAN HASIL TRY OUT PAI</h1>
         <h2 className="text-xl mt-2">
@@ -50,7 +82,7 @@ export default function RekapNilai() {
         <hr className="my-4 border-black" />
       </div>
 
-      {/* HEADER WEB (DISEMBUNYIKAN SAAT DICETAK) */}
+      {/* HEADER WEB (SEMBUNYI SAAT PRINT) */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4 print:hidden">
         <div>
           <h1 className="text-2xl font-bold">Rekapitulasi Nilai</h1>
@@ -58,26 +90,35 @@ export default function RekapNilai() {
         </div>
         
         <div className="flex flex-wrap gap-2 items-center">
-          <label className="font-medium text-sm">Filter Sekolah:</label>
-          <select 
-            className="border p-2 rounded font-medium"
-            value={filterSekolah}
-            onChange={(e) => setFilterSekolah(e.target.value)}
-          >
-            {daftarSekolah.map((sek, i) => (
-              <option key={i} value={sek}>{sek}</option>
-            ))}
-          </select>
           
-          {/* TOMBOL PRINT PDF */}
+          {/* LOGIKA FILTER: Jika Admin/Panitia, tampilkan dropdown. Jika Pengawas, kunci teksnya. */}
+          {isAdminOrPanitia ? (
+            <>
+              <label className="font-medium text-sm">Filter Sekolah:</label>
+              <select 
+                className="border p-2 rounded font-medium"
+                value={filterSekolah}
+                onChange={(e) => setFilterSekolah(e.target.value)}
+              >
+                {daftarSekolah.map((sek, i) => (
+                  <option key={i} value={sek}>{sek}</option>
+                ))}
+              </select>
+            </>
+          ) : (
+            <div className="bg-blue-100 text-blue-800 px-4 py-2 rounded font-bold border border-blue-300">
+              Sekolah: {mySekolah || '-'}
+            </div>
+          )}
+          
           <button 
             onClick={() => window.print()} 
-            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded text-sm font-bold shadow flex items-center gap-2"
+            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded text-sm font-bold shadow flex items-center gap-2 ml-2"
           >
             🖨️ Cetak PDF
           </button>
           
-          <button onClick={() => router.push('/dashboard')} className="bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded text-sm font-medium ml-2">
+          <button onClick={() => router.push('/dashboard')} className="bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded text-sm font-medium">
             Kembali
           </button>
         </div>
