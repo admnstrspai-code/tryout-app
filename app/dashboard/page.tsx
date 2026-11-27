@@ -39,16 +39,21 @@ export default function Dashboard() {
       .order('locked_at', { ascending: false, nullsFirst: false })
     setRows((sData as any) || [])
 
-    // 2. Jika yang login adalah Pengawas, ambil daftar siswa (Gunakan ilike agar tidak sensitif huruf besar/kecil)
+        // 2. Jika yang login adalah Pengawas, ambil daftar siswa
     if (currentRole === 'pengawas' && currentSekolah) {
-      const { data: siswaData } = await supabase
+      const { data: siswaData, error: siswaError } = await supabase
         .from('profiles')
         .select('id, full_name, email')
         .eq('role', 'siswa')
-        .ilike('sekolah', currentSekolah) // <-- ilike membuat pencarian tidak peduli huruf besar/kecil
+        .ilike('sekolah', `%${currentSekolah.trim()}%`) // Gunakan % agar lebih longgar
         .order('full_name')
       
-      if (siswaData) setSiswaSekolah(siswaData as Siswa[])
+      if (siswaError) {
+        console.error("GAGAL AMBIL SISWA:", siswaError.message)
+      } else {
+        console.log("BERHASIL AMBIL SISWA:", siswaData)
+        if (siswaData) setSiswaSekolah(siswaData as Siswa[])
+      }
     }
 
     // 3. Ambil Daftar Ujian
