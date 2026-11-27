@@ -11,7 +11,17 @@ type S = { id: string; status: 'active'|'locked'|'finished'; exam_id: string; st
 const LOCK_AFTER_MS = 30_000
 const POLL_ACTIVE_MS = 60_000
 const POLL_LOCKED_MS = 10_000
-const MINIMUM_MINUTES = 0
+const MINIMUM_MINUTES = 60 // Ingat: Ubah ke 0 jika ingin uji coba cepat
+
+// Fungsi untuk mengacak array (Fisher-Yates Shuffle)
+const shuffleArray = (array: any[]) => {
+  const arr = [...array]
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]]
+  }
+  return arr
+}
 
 export default function ExamPage() {
   const router = useRouter()
@@ -26,15 +36,17 @@ export default function ExamPage() {
   const [currentIdx, setCurrentIdx] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
   
-  // STATE BARU: Untuk Halaman Instruksi
   const [showWelcome, setShowWelcome] = useState(true)
   const [examId, setExamId] = useState<string>('')
   const [isStarting, setIsStarting] = useState(false)
 
+  // State untuk menyimpan urutan pilihan A, B, C, D yang sudah diacak per soal
+  const [shuffledOptions, setShuffledOptions] = useState<string[]>([])
+
   const hideTimer = useRef<number | null>(null)
   const warnInterval = useRef<number | null>(null)
 
-  // 1. INIT: Ambil Data
+  // 1. INIT: Ambil Data & Acak Soal
   useEffect(() => {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser()
@@ -47,13 +59,15 @@ export default function ExamPage() {
       setExamId(exam.id)
 
       const { data: qs } = await supabase.from('questions_untuk_siswa').select('*').eq('exam_id', exam.id).order('number')
-      setQuestions((qs || []) as Q[])
+      
+      // ACAK SOAL: Kita gunakan shuffleArray di sini
+      if (qs) {
+        setQuestions(shuffleArray(qs) as Q[])
+      }
 
-      // Cek apakah siswa sudah punya sesi ujian
       const { data: sess } = await supabase.from('sessions').select('*').eq('user_id', user.id).eq('exam_id', exam.id).maybeSingle()
       
       if (sess) {
-        // Jika sesi sudah ada (misal: refresh halaman), langsung masuk ujian
         setSession(sess as S)
         setShowWelcome(false)
         const { data: ans } = await supabase.from('answers').select('question_id, choice').eq('session_id', sess.id)
@@ -61,26 +75,39 @@ export default function ExamPage() {
         ans?.forEach((a: any) => map[a.question_id] = a.choice)
         setAnswers(map)
       }
-      // Jika belum ada sesi, biarkan showWelcome = true
     })()
   }, [router])
 
-  // 2. FUNGSI MULAI UJIAN (Dipicu dari Halaman Instruksi)
+  // 2. ACAK PILIHAN JAWABAN & BLOKIR KLIK KANAN
+  useEffect(() => {
+    // Acak urutan A, B, C, D setiap kali soal berubah
+    setShuffledOptions(shuffleArray(['A', 'B', 'C', 'D']))
+
+    // Blokir Klik Kanan & Copy
+    const handleContextMenu = (e: MouseEvent) => e.preventDefault()
+    const handleCopy = (e: ClipboardEvent) => e.preventDefault()
+    
+    document.addEventListener('contextmenu', handleContextMenu)
+    document.addEventListener('copy', handleCopy)
+    return () => {
+      document.removeEventListener('contextmenu', handleContextMenu)
+      document.removeEventListener('copy', handleCopy)
+    }
+  }, [currentIdx, questions])
+
   const handleStartExam = async () => {
     setIsStarting(true)
     try {
-      // Meminta izin Fullscreen ke browser
       if (document.documentElement.requestFullscreen) {
         await document.documentElement.requestFullscreen()
       }
     } catch (err) {
-      console.log("Fullscreen ditolak oleh browser")
+      console.log("Fullscreen ditolak")
     }
 
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    // Baru membuat sesi di database (timer mulai berjalan)
     const { data: newSess } = await supabase.from('sessions').insert({ user_id: user.id, exam_id: examId }).select().single()
     if (newSess) {
       setSession(newSess as S)
@@ -114,7 +141,7 @@ export default function ExamPage() {
     return () => clearInterval(interval)
   }, [session, examDuration])
 
-  // 4. DETEKSI PINDAH TAB (Anti-Kecurangan)
+  // 4. DETEKSI PINDAH TAB
   useEffect(() => {
     if (!session || session.status !== 'active') return
     const onVis = () => {
@@ -153,7 +180,6 @@ export default function ExamPage() {
     return () => clearInterval(id)
   }, [session])
 
-  // 6. SIMPAN JAWABAN
   const saveAnswer = useCallback(async (qid: string, choice: string) => {
     if (!session) return
     setAnswers(a => ({ ...a, [qid]: choice }))
@@ -163,20 +189,19 @@ export default function ExamPage() {
     )
   }, [session])
 
-  // 7. SUBMIT MANUAL
   const handleSubmit = async () => {
     if (!session) return
     const minutesElapsed = Math.floor(timeElapsed / 60)
     if (minutesElapsed < MINIMUM_MINUTES) {
-      alert(`Anda baru mengerjakan ${minutesElapsed} menit. Anda harus mengerjakan minimal ${MINIMUM_MINUTES} menit sebelum bisa mengumpulkan.`)
+      alert(`Anda baru mengerjakan ${minutesElapsed} menit. Minimal ${MINIMUM_MINUTES} menit.`)
       return
     }
     const answeredCount = Object.keys(answers).length
     if (answeredCount < questions.length) {
-      alert(`Masih ada ${questions.length - answeredCount} soal yang belum dijawab! Silakan cek navigasi soal berwarna merah.`)
+      alert(`Masih ada ${questions.length - answeredCount} soal yang belum dijawab!`)
       return
     }
-    if (!confirm('Semua soal sudah dijawab. Yakin ingin mengumpulkan ujian?')) return
+    if (!confirm('Semua soal sudah dijawab. Yakin ingin mengumpulkan?')) return
     setIsSubmitting(true)
 
     const { error } = await supabase.from('sessions').update({ 
@@ -189,19 +214,9 @@ export default function ExamPage() {
       alert('Gagal mengumpulkan: ' + error.message)
       setIsSubmitting(false)
     } else {
-      // Ambil data sesi terbaru dari DB agar skor (yang dihitung database) langsung muncul
       const { data: updatedSess } = await supabase.from('sessions').select('*').eq('id', session.id).single()
-      
-      if (updatedSess) {
-        setSession(updatedSess as S)
-      } else {
-        setSession(s => s ? { ...s, status: 'finished' } : s)
-      }
-      
-      // Keluar dari Fullscreen jika selesai
-      if (document.fullscreenElement) {
-        document.exitFullscreen()
-      }
+      if (updatedSess) setSession(updatedSess as S)
+      if (document.fullscreenElement) document.exitFullscreen()
     }
   }
 
@@ -215,29 +230,20 @@ export default function ExamPage() {
   }
 
   if (!session && showWelcome) return (
-    // ===== HALAMAN INSTRUKSI (WELCOME SCREEN) =====
-    <main className="min-h-screen bg-gray-100 flex items-center justify-center p-6">
+    <main className="min-h-screen bg-gray-100 flex items-center justify-center p-6 select-none">
       <div className="bg-white p-8 rounded-lg shadow-lg max-w-2xl w-full">
         <h1 className="text-3xl font-bold text-center mb-6 text-blue-900">Instruksi Ujian</h1>
         
         <div className="space-y-4 mb-8 text-gray-700">
-          <div className="flex items-start">
-            <span className="text-xl mr-3">📝</span>
-            <p>Ujian ini terdiri dari <strong>{questions.length} soal</strong> Pilihan Ganda.</p>
-          </div>
-          <div className="flex items-start">
-            <span className="text-xl mr-3">⏱️</span>
-            <p>Waktu pengerjaan maksimal adalah <strong>{examDuration} menit</strong>.</p>
-          </div>
-          <div className="flex items-start">
-            <span className="text-xl mr-3">🔒</span>
-            <p>Anda <strong>tidak bisa mengumpulkan</strong> ujian sebelum mengerjakan minimal <strong>60 menit</strong>.</p>
-          </div>
+          <div className="flex items-start"><span className="text-xl mr-3">📝</span><p>Ujian ini terdiri dari <strong>{questions.length} soal</strong> Pilihan Ganda.</p></div>
+          <div className="flex items-start"><span className="text-xl mr-3">⏱️</span><p>Waktu pengerjaan maksimal adalah <strong>{examDuration} menit</strong>.</p></div>
+          <div className="flex items-start"><span className="text-xl mr-3">🔒</span><p>Anda <strong>tidak bisa mengumpulkan</strong> sebelum mengerjakan minimal <strong>{MINIMUM_MINUTES} menit</strong>.</p></div>
+          
           <div className="flex items-start p-4 bg-red-50 border border-red-200 rounded-md mt-4">
             <span className="text-2xl mr-3">⚠️</span>
             <div>
               <p className="font-bold text-red-700">PERINGATAN KERAS!</p>
-              <p className="text-red-600">Dilarang keras berpindah tab, meminimalkan browser, atau meninggalkan halaman ini. Sistem pengawas akan <strong>mengunci ujian Anda secara otomatis</strong> jika Anda terdeteksi keluar dari layar ujian lebih dari 30 detik.</p>
+              <p className="text-red-600">Dilarang keras berpindah tab atau meninggalkan halaman ini. Sistem akan <strong>mengunci ujian</strong> jika Anda keluar lebih dari 30 detik. <em>(Fitur klik kanan dan copy-paste juga dinonaktifkan).</em></p>
             </div>
           </div>
         </div>
@@ -256,36 +262,31 @@ export default function ExamPage() {
   if (!session) return <p className="p-6">Memuat data soal…</p>
 
   if (session.status === 'locked') return (
-    <main className="min-h-screen flex items-center justify-center bg-red-50">
-      <div className="text-center p-8 bg-white rounded shadow max-w-md">
+    <main className="min-h-screen flex items-center justify-center bg-red-50 select-none">
+      <div className="text-center p-8 bg-white rounded shadow max-w-md border-t-8 border-red-600">
         <h1 className="text-2xl font-bold text-red-700">🔒 Ujian Terkunci</h1>
         <p className="mt-3">Anda terdeteksi meninggalkan halaman ujian lebih dari 30 detik.</p>
-        <p className="mt-2 text-sm text-gray-600">Hubungi pengawas. Jika tidak dibuka dalam 30 menit, ujian otomatis selesai.</p>
+        <p className="mt-2 text-sm text-gray-600">Hubungi pengawas di ruangan Anda untuk membuka kunci.</p>
       </div>
     </main>
   )
 
-  // ===== HALAMAN SELESAI (TAMPILAN NILAI BARU) =====
-  if (session.status === 'finished') {
-    return (
-      <main className="min-h-screen flex items-center justify-center bg-green-50">
-        <div className="text-center p-8 bg-white rounded shadow max-w-md w-full border-4 border-green-500">
-          <h1 className="text-3xl font-bold text-green-700 mb-2">Ujian Selesai!</h1>
-          <p className="text-gray-600 mb-6">Jawaban Anda telah berhasil disimpan.</p>
-          
-          <div className="bg-gray-100 p-6 rounded-lg mb-6">
-            <p className="text-sm text-gray-500 mb-2">Nilai Anda:</p>
-            <p className="text-6xl font-bold text-blue-700">{session.score !== null ? session.score : '...'}</p>
-            <p className="text-sm text-gray-500 mt-2">dari 100</p>
-          </div>
-
-          <button onClick={() => router.push('/')} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded font-bold w-full">
-            Kembali ke Halaman Login
-          </button>
+  if (session.status === 'finished') return (
+    <main className="min-h-screen flex items-center justify-center bg-green-50 select-none">
+      <div className="text-center p-8 bg-white rounded shadow max-w-md w-full border-4 border-green-500">
+        <h1 className="text-3xl font-bold text-green-700 mb-2">Ujian Selesai!</h1>
+        <p className="text-gray-600 mb-6">Jawaban Anda telah berhasil disimpan.</p>
+        <div className="bg-gray-100 p-6 rounded-lg mb-6">
+          <p className="text-sm text-gray-500 mb-2">Nilai Anda:</p>
+          <p className="text-6xl font-bold text-blue-700">{session.score !== null ? session.score : '...'}</p>
+          <p className="text-sm text-gray-500 mt-2">dari 100</p>
         </div>
-      </main>
-    )
-  }
+        <button onClick={() => router.push('/')} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded font-bold w-full">
+          Kembali ke Halaman Login
+        </button>
+      </div>
+    </main>
+  )
 
   const currentQ = questions[currentIdx]
   const minutesElapsed = Math.floor(timeElapsed / 60)
@@ -294,8 +295,7 @@ export default function ExamPage() {
   const timeRemainingSeconds = (examDuration * 60) - timeElapsed
 
   return (
-    // ===== HALAMAN UJIAN SESUNGGUHNYA =====
-    <main className="p-6 max-w-5xl mx-auto flex flex-col md:flex-row gap-6">
+    <main className="p-6 max-w-5xl mx-auto flex flex-col md:flex-row gap-6 select-none">
       {showWarning && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
           <div className="bg-white p-8 rounded max-w-md text-center border-4 border-red-500">
@@ -306,18 +306,19 @@ export default function ExamPage() {
       )}
 
       <div className="flex-1">
-        <div className="flex justify-between items-center mb-4 bg-gray-100 p-4 rounded shadow-sm">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 bg-gray-100 p-4 rounded shadow-sm gap-2">
           <h1 className="text-xl font-bold">Ujian PAI</h1>
-          <div className={`text-lg font-mono font-bold ${timeRemainingSeconds < 300 ? 'text-red-600 animate-pulse' : 'text-blue-700'}`}>
+          <div className={`text-lg font-mono font-bold px-3 py-1 rounded ${timeRemainingSeconds < 300 ? 'bg-red-100 text-red-600 animate-pulse' : 'bg-blue-100 text-blue-700'}`}>
             ⏱ Sisa Waktu: {formatRemainingTime()}
           </div>
         </div>
 
         {currentQ && (
           <div className="p-6 border rounded shadow-sm bg-white">
-            <p className="font-medium text-lg mb-4">{currentQ.number}. {currentQ.question}</p>
+            <p className="font-medium text-lg mb-4">{currentIdx + 1}. {currentQ.question}</p>
             <div className="space-y-3">
-              {(['A','B','C','D'] as const).map(opt => (
+              {/* LOOPING PILIHAN YANG SUDAH DIACAK */}
+              {shuffledOptions.map(opt => (
                 <label key={opt} className={`block p-3 border rounded cursor-pointer transition ${answers[currentQ.id] === opt ? 'bg-blue-50 border-blue-500' : 'hover:bg-gray-50'}`}>
                   <input 
                     type="radio" 
@@ -367,7 +368,7 @@ export default function ExamPage() {
                     ${isAnswered ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}
                   `}
                 >
-                  {q.number}
+                  {i + 1}
                 </button>
               )
             })}
